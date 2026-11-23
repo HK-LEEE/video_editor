@@ -1,4 +1,4 @@
-"""명령줄 사용: python -m voxshift input.m4a --preset deep"""
+"""명령줄 사용: python -m video_editor input.m4a --preset deep"""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ from .presets import load_presets
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="voxshift", description="내 녹음을 변조합니다.")
+    p = argparse.ArgumentParser(prog="video_editor", description="내 녹음을 변조합니다.")
     p.add_argument("input", help="녹음 파일 (m4a, wav 등)")
     p.add_argument("--preset", help="프리셋 이름, 또는 all (모든 프리셋)")
     p.add_argument("--pitch", type=float, help="피치 (반음)")

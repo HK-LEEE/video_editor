@@ -1,6 +1,6 @@
 """웹 화면: python app.py 실행 후 브라우저에서
-- http://127.0.0.1:7860         간단 변조기
-- http://127.0.0.1:7860/studio  영상 더빙 스튜디오
+- http://127.0.0.1:7860         간단 변조기 (Gradio)
+- http://127.0.0.1:7860/editor  멀티트랙 영상 편집기
 """
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from pathlib import Path
 import gradio as gr
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
-from voxshift import VoiceSettings, load_audio, load_presets, process, save_wav
-from voxshift.studio import Workspace, make_router
+from video_editor import VoiceSettings, load_audio, load_presets, process, save_wav
+from video_editor.editor import Workspace, make_router
 
 PRESETS = load_presets()
 CUSTOM = "custom"
 CHOICES = [(s.label, name) for name, s in PRESETS.items()] + [("직접 조절 (슬라이더)", CUSTOM)]
-OUT_DIR = Path(tempfile.gettempdir()) / "voxshift"
+OUT_DIR = Path(tempfile.gettempdir()) / "video_editor"
 
 
 def _settings(preset: str, pitch: float, formant: float) -> VoiceSettings:
@@ -54,9 +54,9 @@ def on_preset(preset):
     return gr.update(value=s.pitch, interactive=False), gr.update(value=s.formant, interactive=False)
 
 
-with gr.Blocks(title="voxshift 보이스 체인저") as demo:
-    gr.Markdown("# 🎙️ voxshift 보이스 체인저\n녹음하거나 파일(m4a, wav)을 올리고, 목소리를 골라 변조하세요.  \n"
-                "영상에 맞춰 녹음하고 구간별로 다른 목소리를 입히려면 👉 [더빙 스튜디오](/studio)")
+with gr.Blocks(title="video_editor 보이스 체인저") as demo:
+    gr.Markdown("# 🎙️ video_editor 보이스 체인저\n녹음하거나 파일(m4a, wav)을 올리고, 목소리를 골라 변조하세요.  \n"
+                "영상 편집·더빙은 👉 [video_editor](/editor)")
     with gr.Row():
         with gr.Column():
             inp = gr.Audio(sources=["microphone", "upload"], type="filepath", label="내 목소리")
@@ -81,20 +81,25 @@ with gr.Blocks(title="voxshift 보이스 체인저") as demo:
 
 
 WORKSPACE = Workspace(Path(__file__).with_name("workspace"))
-STUDIO_HTML = Path(__file__).with_name("voxshift") / "static" / "studio.html"
+EDITOR_HTML = Path(__file__).with_name("video_editor") / "static" / "editor.html"
 
-app = FastAPI(title="voxshift")
+app = FastAPI(title="video_editor")
 app.include_router(make_router(WORKSPACE))
 
 
-@app.get("/studio", include_in_schema=False)
+@app.get("/editor", include_in_schema=False)
+def editor():
+    return FileResponse(EDITOR_HTML)
+
+
+@app.get("/studio", include_in_schema=False)  # 예전 주소
 def studio():
-    return FileResponse(STUDIO_HTML)
+    return RedirectResponse("/editor")
 
 
 app = gr.mount_gradio_app(app, demo, path="/")
 
 if __name__ == "__main__":
     print("간단 변조기:     http://127.0.0.1:7860")
-    print("더빙 스튜디오:   http://127.0.0.1:7860/studio")
+    print("영상 편집기:     http://127.0.0.1:7860/editor")
     uvicorn.run(app, host="127.0.0.1", port=7860)

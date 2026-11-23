@@ -2,8 +2,8 @@ import numpy as np
 import pyworld
 import pytest
 
-from voxshift import VoiceSettings, load_presets, process
-from voxshift.engine import SAMPLE_RATE as SR, load_audio, save_wav, trim_silence
+from video_editor import VoiceSettings, load_presets, process
+from video_editor.engine import SAMPLE_RATE as SR, load_audio, save_wav, trim_silence
 
 
 def voice_like(f0=130.0, seconds=1.5):
@@ -87,7 +87,7 @@ def test_presets_survive_max_intensity():
 
 
 def test_peak_limit_never_boosts_and_caps_peaks():
-    from voxshift.engine import peak_limit
+    from video_editor.engine import peak_limit
     t = np.arange(SR) / SR
     quiet = (0.1 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
     assert np.max(np.abs(peak_limit(quiet))) == pytest.approx(0.1, rel=0.01)
