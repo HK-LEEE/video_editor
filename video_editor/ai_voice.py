@@ -96,7 +96,9 @@ class JobRunner:
             with self._lock:
                 job.status = "running"
                 try:
-                    work()
+                    res = work()
+                    if isinstance(res, dict):
+                        job.result = res
                     job.status = "done"
                 except Exception as e:  # noqa: BLE001
                     job.status, job.error = "error", str(e)

@@ -634,7 +634,10 @@ def make_router(ws: Workspace) -> APIRouter:
         job = jobs.jobs.get(jid)
         if not job:
             raise HTTPException(404, "작업을 찾을 수 없습니다.")
-        return {"status": job.status, "error": job.error}
+        return {"status": job.status, "error": job.error, "result": job.result}
+
+    from .ai_routes import add_routes
+    add_routes(router, ws, jobs)
 
     @router.post("/media")
     def upload_media(file: UploadFile = File(...), recorded: bool = Form(False), name: str = Form("")):

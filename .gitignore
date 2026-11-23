@@ -6,3 +6,4 @@ output/
 workspace/
 .venv-seedvc/
 third_party/
+.venv-aitools/
