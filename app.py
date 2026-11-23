@@ -1,4 +1,7 @@
-"""웹 화면: python app.py 실행 후 브라우저에서 http://127.0.0.1:7860"""
+"""웹 화면: python app.py 실행 후 브라우저에서
+- http://127.0.0.1:7860         간단 변조기
+- http://127.0.0.1:7860/studio  영상 더빙 스튜디오
+"""
 from __future__ import annotations
 
 import tempfile
@@ -6,8 +9,12 @@ import time
 from pathlib import Path
 
 import gradio as gr
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from voxshift import VoiceSettings, load_audio, load_presets, process, save_wav
+from voxshift.studio import Workspace, make_router
 
 PRESETS = load_presets()
 CUSTOM = "custom"
@@ -48,7 +55,8 @@ def on_preset(preset):
 
 
 with gr.Blocks(title="voxshift 보이스 체인저") as demo:
-    gr.Markdown("# 🎙️ voxshift 보이스 체인저\n녹음하거나 파일(m4a, wav)을 올리고, 목소리를 골라 변조하세요.")
+    gr.Markdown("# 🎙️ voxshift 보이스 체인저\n녹음하거나 파일(m4a, wav)을 올리고, 목소리를 골라 변조하세요.  \n"
+                "영상에 맞춰 녹음하고 구간별로 다른 목소리를 입히려면 👉 [더빙 스튜디오](/studio)")
     with gr.Row():
         with gr.Column():
             inp = gr.Audio(sources=["microphone", "upload"], type="filepath", label="내 목소리")
@@ -72,5 +80,21 @@ with gr.Blocks(title="voxshift 보이스 체인저") as demo:
     all_btn.click(convert_all, [inp, intensity], all_outs)
 
 
+WORKSPACE = Workspace(Path(__file__).with_name("workspace"))
+STUDIO_HTML = Path(__file__).with_name("voxshift") / "static" / "studio.html"
+
+app = FastAPI(title="voxshift")
+app.include_router(make_router(WORKSPACE))
+
+
+@app.get("/studio", include_in_schema=False)
+def studio():
+    return FileResponse(STUDIO_HTML)
+
+
+app = gr.mount_gradio_app(app, demo, path="/")
+
 if __name__ == "__main__":
-    demo.launch()
+    print("간단 변조기:     http://127.0.0.1:7860")
+    print("더빙 스튜디오:   http://127.0.0.1:7860/studio")
+    uvicorn.run(app, host="127.0.0.1", port=7860)

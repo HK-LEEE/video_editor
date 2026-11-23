@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>voxshift 더빙 스튜디오</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e2e2de;
+    --accent: #e8590c; --accent-ink: #fff; --clip: #3b6fd8; --clip-sel: #e8590c; --rec: #d62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --panel: #212124; --ink: #f2f2f2; --muted: #9a9aa0; --line: #34343a;
+            --clip: #5b8cf0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; }
+  header h1 { font-size: 20px; margin: 0; }
+  header a { color: var(--muted); font-size: 14px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 0 20px 40px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.rec { color: var(--rec); font-weight: 600; }
+  button.rec.on { background: var(--rec); color: #fff; border-color: var(--rec); }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
+  select, input[type=number] { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
+                               background: var(--panel); color: var(--ink); }
+  input[type=number] { width: 80px; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 120px; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 50px 20px; text-align: center; color: var(--muted); cursor: pointer; }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  video { width: 100%; max-height: 52vh; background: #000; border-radius: 8px; display: block; }
+  #tlWrap { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line); border-radius: 8px; margin-top: 10px; }
+  #tl { display: block; cursor: pointer; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field span { font-size: 13px; color: var(--muted); }
+  #status { min-height: 1.4em; }
+  .err { color: var(--rec); }
+  #result video { margin-top: 10px; max-height: 40vh; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 voxshift 더빙 스튜디오</h1>
+  <a href="/">← 간단 변조기</a>
+</header>
+<main>
+  <section class="panel" id="uploadPanel">
+    <div id="drop">영상을 여기로 끌어 놓거나 눌러서 고르세요 (mp4, mov, webm)</div>
+    <input type="file" id="videoFile" accept="video/*" hidden>
+  </section>
+
+  <section class="panel" id="editor" hidden>
+    <video id="video" playsinline preload="auto"></video>
+    <div class="row" style="margin-top:10px">
+      <button id="playBtn" title="스페이스">▶ 재생</button>
+      <button id="recBtn" class="rec" title="R">⏺ 여기서 녹음</button>
+      <span class="time" id="time">0:00.0 / 0:00.0</span>
+      <label class="inline">원본 소리 <input type="range" id="origVol" min="0" max="1" step="0.05" value="0"></label>
+      <label class="inline" title="헤드폰을 쓸 때만 켜세요. 스피커로 들으면 녹음에 섞입니다.">
+        <input type="checkbox" id="monitor"> 녹음 중 소리 듣기 (헤드폰)</label>
+      <label class="inline" title="녹음이 영상보다 늦게 들리면 값을 키우세요">싱크 보정
+        <input type="number" id="latency" value="0" step="10"> ms</label>
+      <label class="inline">확대 <input type="range" id="zoom" min="20" max="400" value="80"></label>
+      <button id="newVideoBtn">다른 영상</button>
+    </div>
+    <div id="tlWrap"><canvas id="tl" height="150"></canvas></div>
+    <p class="hint">타임라인을 눌러 위치를 옮기고, 구간을 끌어 옮기거나 양 끝을 끌어 다듬으세요.
+      <kbd>Space</kbd> 재생 · <kbd>R</kbd> 녹음 · <kbd>S</kbd> 재생 위치에서 자르기 · <kbd>Delete</kbd> 구간 지우기</p>
+  </section>
+
+  <section class="panel" id="clipPanel" hidden>
+    <div class="row" style="justify-content:space-between">
+      <strong id="clipTitle">선택한 구간</strong>
+      <div class="row">
+        <button id="soloBtn">▶ 이 구간 듣기</button>
+        <button id="splitBtn">✂ 재생 위치에서 자르기</button>
+        <button id="dupBtn">복제</button>
+        <button id="delBtn">삭제</button>
+      </div>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <label class="field"><span>목소리</span><select id="voice"></select></label>
+      <label class="field"><span>강도 <b id="intVal">1.0</b></span>
+        <input type="range" id="intensity" min="0.5" max="3" step="0.1" value="1"></label>
+      <label class="field"><span>볼륨 <b id="gainVal">100%</b></span>
+        <input type="range" id="gain" min="0" max="2" step="0.05" value="1"></label>
+      <div class="field"><span>위치</span><span id="clipPos" class="time"></span></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="applyAllBtn">이 목소리를 모든 구간에 적용</button>
+    </div>
+  </section>
+
+  <section class="panel" id="exportPanel" hidden>
+    <div class="row">
+      <button id="exportBtn" class="primary">영상으로 내보내기 (mp4)</button>
+      <span id="status"></span>
+    </div>
+    <div id="result"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const video = $('video'), canvas = $('tl'), wrap = $('tlWrap');
+  const RULER = 24, TRACK_Y = 34, TRACK_H = 100, EDGE = 7;
+
+  // ------------------------------------------------------------ 상태
+  let state = { video: null, takes: {}, clips: [], origVol: 0, latency: 0, zoom: 80, monitor: false };
+  let selected = null;
+  const STORE = 'voxshift.studio.v1';
+  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch {} };
+  const uid = () => Math.random().toString(36).slice(2, 10);
+  const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
+  const clipLen = (c) => c.src_out - c.src_in;
+  const clipEnd = (c) => c.start + clipLen(c);
+  const status = (msg, err) => { $('status').textContent = msg || ''; $('status').className = err ? 'err' : ''; };
+  const pps = () => state.zoom;
+  const duration = () => (state.video && (video.duration || state.video.duration)) || 0;
+
+  // ------------------------------------------------------------ 오디오 버퍼
+  let ctx = null;
+  const audioCtx = () => (ctx ||= new (window.AudioContext || window.webkitAudioContext)());
+  const buffers = new Map();   // key -> {promise, buffer, peaks}
+  const bufKey = (c) => `${c.take_id}|${c.voice}|${(+c.intensity).toFixed(2)}`;
+
+  function loadBuffer(c) {
+    const key = bufKey(c);
+    if (!buffers.has(key)) {
+      const entry = { buffer: null, peaks: null };
+      entry.promise = fetch(`/api/takes/${c.take_id}/audio?voice=${c.voice}&intensity=${(+c.intensity).toFixed(2)}`)
+        .then((r) => { if (!r.ok) throw new Error('오디오를 불러오지 못했습니다'); return r.arrayBuffer(); })
+        .then((ab) => audioCtx().decodeAudioData(ab))
+        .then((buf) => { entry.buffer = buf; entry.peaks = peaksOf(buf); draw(); return buf; })
+        .catch((e) => { buffers.delete(key); status(e.message, true); });
+      buffers.set(key, entry);
+    }
+    return buffers.get(key);
+  }
+  function peaksOf(buf) {
+    const d = buf.getChannelData(0), step = Math.max(1, Math.floor(buf.sampleRate / 200));
+    const out = new Float32Array(Math.ceil(d.length / step));
+    for (let i = 0; i < out.length; i++) {
+      let m = 0; const end = Math.min(d.length, (i + 1) * step);
+      for (let j = i * step; j < end; j++) { const v = Math.abs(d[j]); if (v > m) m = v; }
+      out[i] = m;
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------ 미리듣기 (영상 시간에 맞춰 예약 재생)
+  let playing = [];
+  function stopVoices() { playing.forEach((n) => { try { n.stop(); } catch {} }); playing = []; }
+  function scheduleVoices(only) {
+    stopVoices();
+    if (video.paused) return;
+    const ac = audioCtx(); ac.resume();
+    const t = video.currentTime;
+    for (const c of state.clips) {
+      if (only && c !== only) continue;
+      if (clipEnd(c) <= t) continue;
+      const entry = loadBuffer(c);
+      if (!entry.buffer) { entry.promise.then(() => { if (!video.paused) scheduleVoices(only); }); continue; }
+      const delay = Math.max(0, c.start - t);
+      const offset = c.src_in + Math.max(0, t - c.start);
+      const dur = c.src_out - offset;
+      if (dur <= 0) continue;
+      const src = ac.createBufferSource(); src.buffer = entry.buffer;
+      const g = ac.createGain(); g.gain.value = c.gain;
+      src.connect(g).connect(ac.destination);
+      src.start(ac.currentTime + delay, offset, dur);
+      playing.push(src);
+    }
+  }
+  let soloClip = null;
+  video.addEventListener('playing', () => { if (!recording) scheduleVoices(soloClip); });
+  video.addEventListener('pause', () => { stopVoices(); soloClip = null; $('playBtn').textContent = '▶ 재생'; });
+  video.addEventListener('play', () => { $('playBtn').textContent = '⏸ 정지'; });
+  video.addEventListener('ended', () => { if (recording) stopRecording(); });
+  video.addEventListener('seeked', () => { if (!video.paused && !recording) scheduleVoices(soloClip); });
+  function applyVolume() {
+    video.volume = Math.min(1, state.origVol);
+    video.muted = state.origVol === 0 || (recording && !state.monitor);
+  }
+
+  // ------------------------------------------------------------ 영상 올리기
+  const drop = $('drop');
+  drop.onclick = () => $('videoFile').click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) uploadVideo(e.dataTransfer.files[0]); };
+  $('videoFile').onchange = (e) => e.target.files[0] && uploadVideo(e.target.files[0]);
+
+  async function uploadVideo(file) {
+    drop.textContent = '올리는 중…';
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const r = await fetch('/api/videos', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error((await r.json()).detail || '업로드 실패');
+      const v = await r.json();
+      state = { ...state, video: v, takes: {}, clips: [] };
+      if (!v.has_audio) state.origVol = 0;
+      selected = null; save(); openEditor();
+    } catch (e) { drop.textContent = '실패: ' + e.message + ' (다시 눌러 고르세요)'; }
+  }
+  function openEditor() {
+    $('uploadPanel').hidden = true;
+    ['editor', 'exportPanel'].forEach((id) => $(id).hidden = false);
+    video.src = `/api/videos/${state.video.id}`;
+    $('origVol').value = state.origVol; $('latency').value = state.latency;
+    $('zoom').value = state.zoom; $('monitor').checked = state.monitor;
+    $('origVol').disabled = state.video.has_audio === false;
+    applyVolume(); state.clips.forEach(loadBuffer); selectClip(null); resize();
+  }
+  $('newVideoBtn').onclick = () => {
+    if (state.clips.length && !confirmLeave()) return;
+    video.pause(); state = { ...state, video: null, takes: {}, clips: [] }; save();
+    $('uploadPanel').hidden = false; ['editor', 'clipPanel', 'exportPanel'].forEach((id) => $(id).hidden = true);
+    drop.textContent = '영상을 여기로 끌어 놓거나 눌러서 고르세요 (mp4, mov, webm)'; $('result').innerHTML = '';
+  };
+  // 브라우저 확인창 대신 두 번 누르기로 확인
+  let leaveArmed = 0;
+  function confirmLeave() {
+    if (Date.now() - leaveArmed < 3000) return true;
+    leaveArmed = Date.now(); $('newVideoBtn').textContent = '한 번 더 누르면 지금 작업이 지워져요';
+    setTimeout(() => $('newVideoBtn').textContent = '다른 영상', 3000);
+    return false;
+  }
+
+  // ------------------------------------------------------------ 녹음
+  let recording = false, recorder = null, stream = null, recT0 = 0, recPerf = 0, playPerf = 0, chunks = [];
+  async function startRecording() {
+    if (recording) return stopRecording();
+    try {
+      stream ||= await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: false } });
+    } catch (e) { status('마이크를 쓸 수 없어요. 브라우저의 마이크 권한을 확인하세요.', true); return; }
+    stopVoices();
+    if (video.ended || video.currentTime >= duration() - 0.05) video.currentTime = 0;
+    recording = true; applyVolume();
+    $('recBtn').classList.add('on'); $('recBtn').textContent = '⏹ 녹음 멈추기';
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstart = async () => {
+      recPerf = performance.now(); recT0 = video.currentTime;
+      video.addEventListener('playing', () => { playPerf = performance.now(); if (state.monitor) scheduleVoices(); }, { once: true });
+      await video.play();
+    };
+    recorder.onstop = finishRecording;
+    recorder.start();
+  }
+  function stopRecording() {
+    if (!recording) return;
+    recorder.stop(); video.pause();
+  }
+  async function finishRecording() {
+    recording = false; applyVolume();
+    $('recBtn').classList.remove('on'); $('recBtn').textContent = '⏺ 여기서 녹음';
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    status('녹음 저장 중…');
+    const fd = new FormData(); fd.append('file', blob, 'take' + (blob.type.includes('mp4') ? '.m4a' : '.webm'));
+    try {
+      const r = await fetch('/api/takes', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error((await r.json()).detail || '녹음 저장 실패');
+      const take = await r.json();
+      state.takes[take.id] = { duration: take.duration };
+      // 녹음 시작과 영상 재생 시작 사이의 차이 + 사용자 보정만큼 앞으로 당김
+      const lead = Math.max(0, (playPerf - recPerf) / 1000) + state.latency / 1000;
+      let start = recT0 - lead, src_in = 0;
+      if (start < 0) { src_in = -start; start = 0; }
+      const c = { id: uid(), take_id: take.id, src_in, src_out: take.duration, start, voice: lastVoice, intensity: lastIntensity, gain: 1 };
+      if (clipLen(c) > 0.05) { state.clips.push(c); loadBuffer(c); selectClip(c); }
+      save(); status('녹음을 타임라인에 넣었어요.'); draw();
+    } catch (e) { status(e.message, true); }
+  }
+  $('recBtn').onclick = startRecording;
+
+  // ------------------------------------------------------------ 구간 편집
+  let lastVoice = 'original', lastIntensity = 1;
+  function selectClip(c) {
+    selected = c; $('clipPanel').hidden = !c;
+    if (c) {
+      $('voice').value = c.voice; $('intensity').value = c.intensity; $('gain').value = c.gain;
+      $('intVal').textContent = (+c.intensity).toFixed(1); $('gainVal').textContent = Math.round(c.gain * 100) + '%';
+      $('clipTitle').textContent = `구간 ${state.clips.indexOf(c) + 1}`;
+      updateClipPos();
+    }
+    draw();
+  }
+  const updateClipPos = () => selected && ($('clipPos').textContent = `${fmt(selected.start)} – ${fmt(clipEnd(selected))} (${clipLen(selected).toFixed(1)}초)`);
+  function changed(c) { loadBuffer(c); save(); updateClipPos(); draw(); if (!video.paused) scheduleVoices(soloClip); }
+
+  fetch('/api/voices').then((r) => r.json()).then((vs) => {
+    $('voice').innerHTML = vs.map((v) => `<option value="${v.name}">${v.label}</option>`).join('');
+    if (selected) $('voice').value = selected.voice;
+  });
+  $('voice').onchange = (e) => { if (!selected) return; selected.voice = lastVoice = e.target.value; changed(selected); };
+  $('intensity').oninput = (e) => { $('intVal').textContent = (+e.target.value).toFixed(1); };
+  $('intensity').onchange = (e) => { if (!selected) return; selected.intensity = lastIntensity = +e.target.value; changed(selected); };
+  $('gain').oninput = (e) => { if (!selected) return; selected.gain = +e.target.value; $('gainVal').textContent = Math.round(selected.gain * 100) + '%'; changed(selected); };
+  $('applyAllBtn').onclick = () => { if (!selected) return; state.clips.forEach((c) => { c.voice = selected.voice; c.intensity = selected.intensity; loadBuffer(c); }); save(); draw(); status('모든 구간에 같은 목소리를 적용했어요.'); };
+
+  function splitAt(t) {
+    const c = selected && t > selected.start + 0.05 && t < clipEnd(selected) - 0.05 ? selected
+      : state.clips.find((k) => t > k.start + 0.05 && t < clipEnd(k) - 0.05);
+    if (!c) { status('재생 위치가 구간 안에 있어야 자를 수 있어요.', true); return; }
+    const cut = c.src_in + (t - c.start);
+    const right = { ...c, id: uid(), src_in: cut, start: t };
+    c.src_out = cut;
+    state.clips.splice(state.clips.indexOf(c) + 1, 0, right);
+    selectClip(right); changed(right);
+  }
+  function removeSelected() {
+    if (!selected) return;
+    state.clips.splice(state.clips.indexOf(selected), 1); selectClip(null); save(); draw();
+    if (!video.paused) scheduleVoices();
+  }
+  $('splitBtn').onclick = () => splitAt(video.currentTime);
+  $('delBtn').onclick = removeSelected;
+  $('dupBtn').onclick = () => {
+    if (!selected) return;
+    const c = { ...selected, id: uid(), start: Math.min(clipEnd(selected), Math.max(0, duration() - clipLen(selected))) };
+    state.clips.push(c); selectClip(c); changed(c);
+  };
+  $('soloBtn').onclick = () => {
+    if (!selected) return;
+    soloClip = selected; video.currentTime = selected.start;
+    const end = clipEnd(selected);
+    const stopAt = () => { if (video.currentTime >= end) { video.pause(); video.removeEventListener('timeupdate', stopAt); } };
+    video.addEventListener('timeupdate', stopAt); video.play();
+  };
+
+  // ------------------------------------------------------------ 컨트롤
+  $('playBtn').onclick = () => { audioCtx().resume(); soloClip = null; video.paused ? video.play() : video.pause(); };
+  $('origVol').oninput = (e) => { state.origVol = +e.target.value; applyVolume(); save(); };
+  $('latency').onchange = (e) => { state.latency = +e.target.value || 0; save(); };
+  $('monitor').onchange = (e) => { state.monitor = e.target.checked; applyVolume(); save(); };
+  $('zoom').oninput = (e) => { state.zoom = +e.target.value; save(); resize(); };
+  document.addEventListener('keydown', (e) => {
+    if (!state.video || e.target.matches('input, select, textarea')) return;
+    if (e.code === 'Space') { e.preventDefault(); $('playBtn').click(); }
+    else if (e.key === 'r' || e.key === 'R') startRecording();
+    else if (e.key === 's' || e.key === 'S') splitAt(video.currentTime);
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSelected(); }
+  });
+
+  // ------------------------------------------------------------ 타임라인 그리기
+  function resize() {
+    const w = Math.max(wrap.clientWidth - 2, Math.ceil(duration() * pps()) + 40);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = w + 'px'; canvas.style.height = '150px';
+    canvas.width = w * dpr; canvas.height = 150 * dpr;
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  video.addEventListener('loadedmetadata', resize);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  function draw() {
+    const g = canvas.getContext('2d'), W = canvas.clientWidth, H = 150, s = pps(), D = duration();
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = css('--panel'); g.fillRect(0, 0, W, H);
+    // 영상 범위
+    g.fillStyle = css('--bg'); g.fillRect(0, TRACK_Y, D * s, TRACK_H);
+    // 눈금
+    g.strokeStyle = css('--line'); g.fillStyle = css('--muted'); g.font = '11px sans-serif';
+    const major = s >= 150 ? 1 : s >= 60 ? 2 : s >= 30 ? 5 : 10;
+    for (let t = 0; t <= D + 0.001; t += major / (s >= 60 ? 2 : 1)) {
+      const x = Math.round(t * s) + 0.5, isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
+      g.beginPath(); g.moveTo(x, isMajor ? 8 : 16); g.lineTo(x, RULER); g.stroke();
+      if (isMajor) g.fillText(fmt(t).replace(/\.0$/, ''), x + 3, 12);
+    }
+    // 구간
+    for (const c of state.clips) {
+      const x = c.start * s, w = Math.max(2, clipLen(c) * s), sel = c === selected;
+      const col = sel ? css('--clip-sel') : css('--clip');
+      g.fillStyle = col + '33'; g.fillRect(x, TRACK_Y, w, TRACK_H);
+      g.strokeStyle = col; g.lineWidth = sel ? 2 : 1; g.strokeRect(x + .5, TRACK_Y + .5, w - 1, TRACK_H - 1);
+      const entry = buffers.get(bufKey(c));
+      if (entry && entry.peaks) {
+        g.fillStyle = col; const mid = TRACK_Y + TRACK_H / 2 + 8, amp = (TRACK_H - 26) / 2;
+        for (let px = 0; px < w; px++) {
+          const i = Math.floor((c.src_in + px / s) * 200);
+          const v = Math.min(1, (entry.peaks[i] || 0) * 1.4) * amp;
+          g.fillRect(x + px, mid - v, 1, Math.max(1, v * 2));
+        }
+      } else { g.fillStyle = css('--muted'); g.fillText('변조 중…', x + 6, TRACK_Y + 50); }
+      g.fillStyle = css('--ink'); g.font = '12px sans-serif';
+      const label = ($('voice').querySelector(`option[value="${c.voice}"]`) || {}).textContent || c.voice;
+      g.save(); g.beginPath(); g.rect(x, TRACK_Y, w, 20); g.clip();
+      g.fillText(`${state.clips.indexOf(c) + 1}. ${label}${c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : ''}`, x + 6, TRACK_Y + 14);
+      g.restore();
+      if (sel) { g.fillStyle = col; g.fillRect(x, TRACK_Y, 4, TRACK_H); g.fillRect(x + w - 4, TRACK_Y, 4, TRACK_H); }
+    }
+    // 재생 위치
+    const px = video.currentTime * s;
+    g.strokeStyle = recording ? css('--rec') : css('--accent'); g.lineWidth = 2;
+    g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke(); g.lineWidth = 1;
+  }
+
+  // ------------------------------------------------------------ 타임라인 마우스
+  let drag = null;
+  function hit(x, y) {
+    if (y < TRACK_Y || y > TRACK_Y + TRACK_H) return null;
+    const s = pps();
+    for (let i = state.clips.length - 1; i >= 0; i--) {
+      const c = state.clips[i], x0 = c.start * s, x1 = clipEnd(c) * s;
+      if (x >= x0 - 2 && x <= x1 + 2) {
+        const mode = x - x0 <= EDGE ? 'left' : x1 - x <= EDGE ? 'right' : 'move';
+        return { c, mode };
+      }
+    }
+    return null;
+  }
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener('pointerdown', (e) => {
+    const [x, y] = pos(e), h = hit(x, y);
+    if (!h) { video.currentTime = Math.min(duration(), Math.max(0, x / pps())); selectClip(null); return; }
+    selectClip(h.c); canvas.setPointerCapture(e.pointerId);
+    drag = { ...h, x0: x, orig: { ...h.c } };
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const [x, y] = pos(e);
+    if (!drag) { const h = hit(x, y); canvas.style.cursor = h ? (h.mode === 'move' ? 'grab' : 'ew-resize') : 'pointer'; return; }
+    const dt = (x - drag.x0) / pps(), c = drag.c, o = drag.orig, take = state.takes[c.take_id] || { duration: o.src_out };
+    if (drag.mode === 'move') c.start = Math.max(0, o.start + dt);
+    else if (drag.mode === 'left') {
+      const d = Math.min(Math.max(dt, -o.src_in, -o.start), clipLen(o) - 0.05);
+      c.src_in = o.src_in + d; c.start = o.start + d;
+    } else c.src_out = Math.min(take.duration, Math.max(o.src_in + 0.05, o.src_out + dt));
+    updateClipPos(); draw();
+  });
+  canvas.addEventListener('pointerup', () => { if (drag) { drag = null; save(); if (!video.paused) scheduleVoices(soloClip); } });
+
+  // ------------------------------------------------------------ 시간 표시
+  (function tick() {
+    if (state.video) {
+      $('time').textContent = `${fmt(video.currentTime)} / ${fmt(duration())}`;
+      draw();
+      if (!video.paused) {
+        const x = video.currentTime * pps();
+        if (x < wrap.scrollLeft || x > wrap.scrollLeft + wrap.clientWidth - 30) wrap.scrollLeft = x - 60;
+      }
+    }
+    requestAnimationFrame(tick);
+  })();
+
+  // ------------------------------------------------------------ 내보내기
+  $('exportBtn').onclick = async () => {
+    if (!state.clips.length) { status('먼저 녹음해서 구간을 만들어 주세요.', true); return; }
+    $('exportBtn').disabled = true; status('목소리를 변조하고 영상에 입히는 중… (길이에 따라 몇십 초 걸려요)');
+    try {
+      const body = { video_id: state.video.id, original_volume: state.origVol,
+        clips: state.clips.map(({ take_id, src_in, src_out, start, voice, intensity, gain }) => ({ take_id, src_in, src_out, start, voice, intensity, gain })) };
+      const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json()).detail || '내보내기 실패');
+      const out = await r.json();
+      status('완성! ');
+      $('result').innerHTML = `<a href="${out.url}" download>⬇ ${out.file} 내려받기</a><video controls src="${out.url}"></video>`;
+    } catch (e) { status(typeof e.message === 'string' ? e.message : '내보내기 실패', true); }
+    finally { $('exportBtn').disabled = false; }
+  };
+
+  // ------------------------------------------------------------ 이어서 작업하기
+  try { const saved = JSON.parse(localStorage.getItem(STORE) || 'null'); if (saved) state = { ...state, ...saved }; } catch {}
+  if (state.video) {
+    fetch(`/api/videos/${state.video.id}/info`).then((r) => {
+      if (r.ok) openEditor(); else { state = { ...state, video: null, takes: {}, clips: [] }; save(); }
+    });
+  }
+})();
+</script>
+</body>
+</html>
