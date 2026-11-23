@@ -24,5 +24,7 @@ if [ "$(uname)" = "Darwin" ]; then
 else
   pip install -r third_party/seed-vc/requirements.txt
 fi
+# 최신 torchaudio(2.9+)는 save()에 torchcodec을 요구해서 Seed-VC 저장 단계가 실패합니다 → 2.8 이하로 고정
+pip install "torch>=2.4,<2.9" "torchaudio>=2.4,<2.9" "torchvision<0.24"
 touch .venv-seedvc/.seedvc-ready
 echo "설치 완료. python app.py 를 다시 실행하세요."
