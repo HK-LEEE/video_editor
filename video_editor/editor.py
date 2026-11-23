@@ -31,7 +31,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from . import ai_voice
+from . import ai_voice, shorts
 from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
@@ -551,10 +551,17 @@ def _pip_xy(c: Clip) -> tuple[str, str]:
             f"max(0,min(main_h-overlay_h,main_h*{c.pip_y:.4f}-overlay_h/2))")
 
 
-def export_video(ws: Workspace, p: Project) -> Path:
+def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = None) -> Path:
+    """short를 주면 9:16(1080x1920)로 자르고·구간을 잘라 내보냅니다."""
     length = project_length(p)
     if length <= 0:
         raise HTTPException(400, "타임라인이 비어 있습니다.")
+    t0, t1 = 0.0, length
+    if short:
+        try:
+            t0, t1 = shorts.span(short, length)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     pending = [c for c in p.clips if ai_voice.is_ai_voice(c.voice)
                and not ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists()]
     if pending:
@@ -563,23 +570,32 @@ def export_video(ws: Workspace, p: Project) -> Path:
     W, H = canvas_size(ws, p)
 
     # PiP 클립에서도 모양이 안 틀어지게: PiP는 layout이 pip인 클립만 겹쳐지고 나머지는 위 규칙대로 쌓입니다
-    inputs, graph = build_video_graph(ws, p, length, W, H)
+    inputs, graph = build_video_graph(ws, p, t1 if short else length, W, H)
     audio_idx = sum(1 for x in inputs if x == "-ss")
     out_label = "vbase"
     uid8 = uuid.uuid4().hex[:8]
     exports = ws.root / "exports"
     ass_name = None
-    if active_cues(p.subtitles, p.subtitle_lang, length):
+    sub_cues, sub_style, sub_w, sub_h, out_len = p.subtitles, p.subtitle_style, W, H, length
+    if short:
+        graph += ";" + shorts.video_filter(W, H, short, t0, t1)
+        out_label, out_len = "vshort", t1 - t0
+        sub_cues = shorts.shift_cues(p.subtitles, t0, t1)
+        sub_w, sub_h = shorts.OUT_W, shorts.OUT_H
+        if short.safe_subs:
+            sub_style = shorts.safe_style(sub_style, short.format)
+    if active_cues(sub_cues, p.subtitle_lang, out_len):
         ass_name = f"subs_{uid8}.ass"
-        (exports / ass_name).write_text(to_ass(p.subtitles, p.subtitle_style, W, H, p.subtitle_lang, length), encoding="utf-8")
-        graph += f";[vbase]ass=filename={ass_name}[vout]"   # ffmpeg를 exports 폴더에서 돌려서 경로 이스케이프가 필요 없습니다
+        (exports / ass_name).write_text(to_ass(sub_cues, sub_style, sub_w, sub_h, p.subtitle_lang, out_len), encoding="utf-8")
+        graph += f";[{out_label}]ass=filename={ass_name}[vout]"   # ffmpeg를 exports 폴더에서 돌려서 경로 이스케이프가 필요 없습니다
         out_label = "vout"
 
-    out = exports / f"video_editor_{uid8}.mp4"
-    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *inputs, "-i", str(wav.resolve()),
+    out = exports / (f"video_editor_{short.format}_{uid8}.mp4" if short else f"video_editor_{uid8}.mp4")
+    audio_in = ["-ss", f"{t0:.4f}", "-t", f"{out_len:.4f}", "-i", str(wav.resolve())] if short else ["-i", str(wav.resolve())]
+    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *inputs, *audio_in,
            "-filter_complex", graph, "-map", f"[{out_label}]", "-map", f"{audio_idx}:a",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-t", f"{length:.4f}", "-movflags", "+faststart", str(out.resolve())]
+           "-c:a", "aac", "-b:a", "192k", "-t", f"{out_len:.4f}", "-movflags", "+faststart", str(out.resolve())]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports)
     finally:
@@ -591,6 +607,11 @@ def export_video(ws: Workspace, p: Project) -> Path:
 
 
 # ================================================================ API
+
+class ShortExport(BaseModel):
+    project: Project
+    spec: shorts.ShortSpec
+
 
 class AIConvert(BaseModel):
     media: str
@@ -678,6 +699,15 @@ def make_router(ws: Workspace) -> APIRouter:
     def export(p: Project):
         out = export_video(ws, p)
         return {"file": out.name, "url": f"/api/exports/{out.name}"}
+
+    @router.get("/short/formats")
+    def short_formats():
+        return {"out": [shorts.OUT_W, shorts.OUT_H], "formats": shorts.FORMATS}
+
+    @router.post("/export/short")
+    def export_short(b: ShortExport):
+        out = export_video(ws, b.project, b.spec)
+        return {"file": out.name, "url": f"/api/exports/{out.name}", "format": b.spec.format}
 
     @router.post("/subtitles/srt")
     def subtitles_srt(p: Project):

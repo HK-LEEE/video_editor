@@ -117,6 +117,38 @@
   #aiDlg.busy { cursor: progress; }
   #aiDlg code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; user-select: all; }
   #aiDlg [hidden] { display: none; }
+
+  /* ---- 쇼츠·릴스 미리보기 ---- */
+  #vp { display: contents; }
+  #shortSubs, #ovl { display: none; }
+  body.short #vp { display: block; position: relative; overflow: hidden; background: #000; border-radius: 22px; box-shadow: 0 0 0 6px #1c1c20, 0 8px 30px #000c; flex: none; touch-action: none; cursor: grab; }
+  body.short #vp.drag { cursor: grabbing; }
+  body.short #frame { position: absolute; aspect-ratio: auto; }
+  body.short #shortSubs { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
+  body.short #shortSubs .cue { position: absolute; transform: translate(-50%, -50%); width: max-content; text-align: center; white-space: pre-wrap; line-height: 1.25; paint-order: stroke fill; }
+  body.short #ovl { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1100; color: #fff; font-size: 11px; overflow: hidden; }
+  #ovl .zone { position: absolute; background: repeating-linear-gradient(135deg, rgba(255,60,60,.28) 0 6px, rgba(255,60,60,.12) 6px 12px); }
+  #ovl .zone.edge { outline: 1px dashed rgba(255,120,120,.9); outline-offset: -1px; }
+  #ovl .ui { position: absolute; text-shadow: 0 1px 3px #000c; }
+  #ovl .grad { left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(transparent, rgba(0,0,0,.55)); }
+  #ovl .tgrad { left: 0; right: 0; top: 0; height: 12%; background: linear-gradient(rgba(0,0,0,.45), transparent); }
+  #ovl .rail { right: 3%; display: flex; flex-direction: column; align-items: center; gap: 4.2%; }
+  #ovl .rail .b { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
+  #ovl .rail .c { width: 2.6em; height: 2.6em; border-radius: 50%; background: rgba(255,255,255,.2); display: grid; place-items: center; font-size: 15px; }
+  #ovl .disc { width: 2.4em; height: 2.4em; border-radius: 6px; background: linear-gradient(135deg, #8a8, #468); border: 2px solid #fff8; }
+  #ovl .who { left: 3.5%; bottom: 9%; display: flex; align-items: center; gap: 6px; font-weight: 700; }
+  #ovl .av { width: 2.4em; height: 2.4em; border-radius: 50%; background: linear-gradient(135deg, #f7a, #7af); border: 1.5px solid #fff; }
+  #ovl .pill { border: 1px solid #fff9; border-radius: 99px; padding: 1px 8px; font-weight: 600; font-size: 10px; background: rgba(255,255,255,.18); }
+  #ovl .cap { left: 3.5%; bottom: 5.2%; width: 70%; font-size: 11px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ovl .aud { left: 3.5%; bottom: 2.4%; font-size: 10px; opacity: .9; }
+  #ovl .top { left: 0; right: 0; top: 2.5%; display: flex; justify-content: space-between; padding: 0 5%; font-weight: 700; font-size: 13px; }
+  #ovl .note { position: absolute; left: 0; right: 0; top: 7%; text-align: center; font-size: 9px; color: #fff9; }
+  #shortPanel .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  #shortPanel .tabs button { flex: 1; }
+  #shortPanel .tabs button.lit { background: var(--accent); border-color: var(--accent); color: #111; }
+  #shortPanel .len { font-variant-numeric: tabular-nums; margin: 4px 0 10px; }
+  #shortPanel .len.over { color: var(--rec); font-weight: 700; }
+  #shortPanel .tip { color: var(--muted); font-size: 11px; margin: 0 0 10px; }
 </style>
 </head>
 <body>
@@ -132,6 +164,7 @@
   <button id="addV">+ 영상 트랙</button>
   <button id="addA">+ 오디오 트랙</button>
   <button id="addSub" title="T: 재생 위치에 자막 넣기">+ 자막</button>
+  <button id="shortBtn" title="유튜브 쇼츠·인스타 릴스 화면으로 미리보기, 자르기, 따로 내보내기">📱 쇼츠/릴스</button>
   <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙">🤖 AI 도구</button>
   <span class="sep"></span>
   <button id="exportBtn" class="primary">내보내기 (mp4)</button>
@@ -148,7 +181,7 @@
     <p class="muted" style="margin-top:10px">항목을 타임라인 트랙으로 끌어 놓으세요. 두 번 누르면 재생 위치에 들어갑니다.</p>
   </aside>
   <section id="monitor">
-    <div id="stage"><div id="frame"><div id="dip"></div><div id="subs"></div></div></div>
+    <div id="stage"><div id="vp"><div id="frame"><div id="dip"></div><div id="subs"></div></div><div id="shortSubs"></div><div id="ovl"></div></div></div>
     <div id="transport">
       <button id="homeBtn" title="Home">⏮</button>
       <button id="playBtn" title="Space">▶</button>
@@ -224,6 +257,13 @@ const RULER = 26, ROW = { video: 54, audio: 62 }, SUBH = 44, EDGE = 7, FRAME = 1
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`; };
+// 쇼츠·릴스 미리보기 상태 (프로젝트에 넣지 않는 보기·내보내기 설정이라 실행 취소와 따로 저장합니다)
+const SHORT_STORE = 'video_editor.short.v1';
+const SHORT = { on: false, fmt: 'shorts', formats: null, ovl: true, zones: true, k: 1, cfg: {} };
+const shortDef = () => ({ zoom: 1, cx: 0.5, cy: 0.5, fit: false, start: 0, end: null, safe: true });
+try { Object.assign(SHORT, JSON.parse(localStorage.getItem(SHORT_STORE) || '{}'), { on: false }); } catch {}
+for (const f of ['shorts', 'reels']) SHORT.cfg[f] = { ...shortDef(), ...(SHORT.cfg[f] || {}) };
+const shortSave = () => { try { localStorage.setItem(SHORT_STORE, JSON.stringify({ fmt: SHORT.fmt, ovl: SHORT.ovl, zones: SHORT.zones, cfg: SHORT.cfg })); } catch {} };
 const status = (msg, err) => { $('status').textContent = msg || ''; $('status').className = err ? 'err' : ''; };
 
 // ================================================================ 상태
@@ -556,6 +596,7 @@ function canvasAspect() {
   return 16 / 9;
 }
 function sizeFrame() {
+  if (SHORT.on) { layoutShort(); return; }
   const ar = canvasAspect(), W = stage.clientWidth, H = stage.clientHeight;
   let w = W, h = W / ar;
   if (h > H) { h = H; w = H * ar; }
@@ -629,11 +670,17 @@ function updateMonitor(t) {
 }
 let subsKey = '';
 function updateSubs(t, fh) {
-  const lang = project.subtitle_lang, st = project.subtitle_style;
+  const lang = project.subtitle_lang;
+  let st = project.subtitle_style, target = subsEl;
+  if (SHORT.on) {   // 쇼츠·릴스 모드: 세로 화면(vp) 위에 안전 영역에 맞춘 자막을 그립니다
+    target = $('shortSubs'); fh = $('vp').clientHeight;
+    if (subsEl.innerHTML) { subsEl.innerHTML = ''; subsKey = ''; }
+    if (SHORT.cfg[SHORT.fmt].safe && SHORT.formats) st = safeSubStyle(st, SHORT.formats[SHORT.fmt].safe);
+  } else if ($('shortSubs').innerHTML) { $('shortSubs').innerHTML = ''; subsKey = ''; }
   const cues = project.subtitles.filter((c) => c.text.trim() && t >= c.start && t < c.end && (!lang || !c.lang || c.lang === lang));
-  const key = JSON.stringify([cues.map((c) => [c.id, c.text]), st, fh]);
+  const key = JSON.stringify([cues.map((c) => [c.id, c.text]), st, fh, SHORT.on]);
   if (key === subsKey) return;
-  subsKey = key; subsEl.innerHTML = '';
+  subsKey = key; target.innerHTML = '';
   const px = st.size * fh;
   for (const c of cues) {
     const d = document.createElement('div'); d.className = 'cue'; d.textContent = c.text.trim();
@@ -641,14 +688,14 @@ function updateSubs(t, fh) {
     Object.assign(d.style, { left: st.x * 100 + '%', top: st.y * 100 + '%', maxWidth: st.max_width * 100 + '%', fontFamily: `"${st.font}", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`,
       fontSize: px + 'px', fontWeight: st.bold ? '700' : '400', color: st.color, background: bg, padding: st.bg_opacity > 0 ? `${px * 0.25}px` : '0',
       webkitTextStroke: st.outline > 0 ? `${2 * st.outline * px}px ${st.outline_color}` : '0' });
-    subsEl.appendChild(d);
+    target.appendChild(d);
   }
 }
 const hexAlpha = (h, a) => `rgba(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)},${a})`;
 // 미리보기에서 PiP 화면을 끌어 옮기기
 let pipDrag = null;
 frameEl.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || SHORT.on) return;
   const b = frameEl.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
   const hit = [...pipHits].reverse().find((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
   if (!hit) return;
@@ -1061,6 +1108,7 @@ function renderSubInspector(box, cue, result) {
   bindSubStyle();
 }
 function renderInspector() {
+  if (SHORT.on) { renderShortPanel(); return; }
   const box = $('inspector'), c = clipById(sel.clip), t = !c && project.tracks.find((k) => k.id === sel.track);
   const result = $('result') ? $('result').outerHTML : '<div id="result"></div>';
   if (!c && !t && (sel.cue || sel.subs)) { renderSubInspector(box, sel.cue && cueById(sel.cue), result); return; }
@@ -1814,6 +1862,7 @@ $('zoom').value = ui.zoom; $('latency').value = ui.latency; $('monitorChk').chec
   let t = playhead();
   const L = projectLength();
   if (playing && !recording && t >= L) { pause(); T = L; t = L; }
+  if (SHORT.on && playing && !recording) { const r = shortRange(); if (t >= r.end - 1e-3) { seek(r.start); t = r.start; } }
   $('time').textContent = `${fmt(t)} / ${fmt(L)}`;
   updateMonitor(t); draw();
   if (playing) {
@@ -2027,6 +2076,181 @@ $('aiTtsRate').oninput = (e) => ($('aiTtsRateV').textContent = '×' + (+e.target
 $('aiDubRate').oninput = (e) => ($('aiDubRateV').textContent = '×' + (+e.target.value).toFixed(1));
 for (const [id, v, auto] of [['aiSubLang', 'ko', true], ['aiCutLang', 'ko'], ['aiTtsLang', 'ko'], ['aiDubSrc', 'ko'], ['aiDubDst', 'en']]) $(id).innerHTML = langOpts(v, auto);
 window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; } };
+
+// ================================================================ 쇼츠·릴스 미리보기 · 리프레임 · 따로 내보내기
+// 안전 영역 안으로 자막 위치를 옮기는 규칙 (서버 video_editor/shorts.py의 safe_style과 같은 계산)
+function safeSubStyle(st, s) {
+  const width = Math.min(st.max_width, s.right - s.left);
+  const x = clamp(st.x, s.left + width / 2, s.right - width / 2), pad = st.size * 1.6;
+  return { ...st, x, y: clamp(st.y, s.top + pad, s.bottom - pad), max_width: width };
+}
+const shortCfg = () => SHORT.cfg[SHORT.fmt];
+const shortFmt = () => (SHORT.formats || {})[SHORT.fmt] || { label: '', limit: 180, safe: { left: .05, right: .84, top: .1, bottom: .78 } };
+function shortRange() {   // 자를 구간 (초). 끝이 비어 있으면 프로젝트 끝까지
+  const L = projectLength(), c = shortCfg();
+  const start = clamp(c.start || 0, 0, Math.max(0, L - 0.2));
+  return { start, end: clamp(c.end == null ? L : c.end, start + 0.2, Math.max(L, start + 0.2)) };
+}
+function layoutShort() {
+  const vp = $('vp'), W = stage.clientWidth, H = stage.clientHeight, c = shortCfg();
+  if (W < 40 || H < 40) return;
+  let vh = Math.min(H - 12, (W - 12) * 16 / 9); vh = Math.max(120, Math.floor(vh)); const vw = Math.floor(vh * 9 / 16);
+  const ar = canvasAspect();
+  let fw, fh, left, top;
+  if (c.fit) {
+    fw = vw; fh = vw / ar; if (fh > vh) { fh = vh; fw = vh * ar; }
+    left = (vw - fw) / 2; top = (vh - fh) / 2; SHORT.k = fh;
+  } else {
+    const w = Math.min(ar, 9 / 16) / c.zoom, h = w * 16 / 9;
+    const cx = clamp(c.cx * ar, w / 2, ar - w / 2), cy = clamp(c.cy, h / 2, 1 - h / 2), k = vw / w;
+    fw = ar * k; fh = k; left = -(cx - w / 2) * k; top = -(cy - h / 2) * k; SHORT.k = k;
+  }
+  const set = (el, o) => { for (const [k, v] of Object.entries(o)) { const s = typeof v === 'number' ? v + 'px' : v; if (el.style[k] !== s) el.style[k] = s; } };
+  set(vp, { width: vw, height: vh });
+  set(frameEl, { width: fw, height: fh, left, top });
+  paintOverlay(vw, vh);
+}
+let ovlKey = '';
+function paintOverlay(vw, vh) {
+  const key = [SHORT.fmt, SHORT.ovl, SHORT.zones, vh].join('|');
+  if (key === ovlKey) return; ovlKey = key;
+  const s = shortFmt().safe, reels = SHORT.fmt === 'reels', pc = (v) => (v * 100).toFixed(2) + '%';
+  let h = '';
+  if (SHORT.zones) {   // 가려지는 영역 (이 밖에는 글자·중요한 것을 두지 마세요)
+    h += `<div class="zone" style="left:0;right:0;top:0;height:${pc(s.top)}"></div>`
+      + `<div class="zone" style="left:0;right:0;top:${pc(s.bottom)};bottom:0"></div>`
+      + `<div class="zone" style="left:0;width:${pc(s.left)};top:${pc(s.top)};height:${pc(s.bottom - s.top)}"></div>`
+      + `<div class="zone" style="left:${pc(s.right)};right:0;top:${pc(s.top)};height:${pc(s.bottom - s.top)}"></div>`
+      + `<div class="zone edge" style="left:${pc(s.left)};top:${pc(s.top)};width:${pc(s.right - s.left)};height:${pc(s.bottom - s.top)};background:none"></div>`;
+  }
+  if (SHORT.ovl) {   // 앱 화면을 흉내 낸 원본 목업 (실제 앱의 이미지·로고가 아니에요)
+    const rail = reels ? [['♡', '2.1만'], ['💬', '318'], ['➤', '공유'], ['⋯', '']] : [['👍', '12만'], ['👎', '싫어요'], ['💬', '1,204'], ['↗', '공유'], ['⟲', '리믹스']];
+    h += '<div class="ui tgrad"></div><div class="ui grad"></div>'
+      + `<div class="ui top"><span>${reels ? '릴스' : '쇼츠'}</span><span>🔍 ⋯</span></div>`
+      + `<div class="ui rail" style="top:${pc(reels ? 0.5 : 0.42)};bottom:${pc(reels ? 0.14 : 0.1)};justify-content:flex-end">`
+      + rail.map(([g, n]) => `<div class="b"><div class="c">${g}</div>${n ? `<span>${n}</span>` : ''}</div>`).join('')
+      + '<div class="disc"></div></div>'
+      + `<div class="ui who"><div class="av"></div><span>@내채널</span><span class="pill">${reels ? '팔로우' : '구독'}</span></div>`
+      + '<div class="ui cap">캡션 미리보기가 여기에 두 줄까지 보여요 #해시태그</div>'
+      + `<div class="ui aud">♪ ${reels ? '원본 오디오 · 내채널' : '원본 사운드'}</div>`;
+  }
+  $('ovl').innerHTML = h;
+}
+// 미리보기 안에서 끌면 위치(구도), 휠이면 확대
+(function () {
+  const vp = $('vp'); let drag = null;
+  vp.addEventListener('pointerdown', (e) => {
+    if (!SHORT.on || e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    const c = shortCfg(); if (c.fit) return;
+    vp.setPointerCapture(e.pointerId); vp.classList.add('drag');
+    drag = { x: e.clientX, y: e.clientY, cx: c.cx, cy: c.cy };
+  }, true);
+  vp.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const c = shortCfg(), ar = canvasAspect();
+    c.cx = clamp(drag.cx - (e.clientX - drag.x) / (SHORT.k * ar), 0, 1);
+    c.cy = clamp(drag.cy - (e.clientY - drag.y) / SHORT.k, 0, 1);
+    shortSync();
+  });
+  const up = () => { if (drag) { drag = null; vp.classList.remove('drag'); shortSave(); } };
+  vp.addEventListener('pointerup', up); vp.addEventListener('pointercancel', up);
+  vp.addEventListener('wheel', (e) => {
+    if (!SHORT.on || shortCfg().fit) return;
+    e.preventDefault(); const c = shortCfg();
+    c.zoom = clamp(c.zoom * Math.exp(-e.deltaY * 0.0015), 1, 5); shortSync(); shortSave();
+  }, { passive: false });
+})();
+function shortSync() {   // 슬라이더·숫자를 현재 값에 맞춥니다
+  const c = shortCfg(), r = shortRange(), set = (id, v) => { const el = $(id); if (el && el !== document.activeElement) el.value = v; };
+  set('shZoom', c.zoom); set('shCx', c.cx); set('shCy', c.cy);
+  if ($('shZoomV')) $('shZoomV').textContent = '×' + c.zoom.toFixed(2);
+  set('shStart', r.start.toFixed(2)); set('shEnd', r.end.toFixed(2));
+  const len = r.end - r.start, lim = shortFmt().limit, el = $('shLen');
+  if (el) { el.className = 'len' + (len > lim + 1e-6 ? ' over' : ''); el.textContent = `길이 ${len.toFixed(1)}초 / 최대 ${lim}초${len > lim + 1e-6 ? ' — 너무 길어요' : ''}`; }
+}
+function setShort(on) {
+  if (on && !project.clips.length) { status('타임라인에 영상을 먼저 넣어 주세요.', true); return; }
+  if (on === SHORT.on) return;
+  pause();
+  SHORT.on = on; document.body.classList.toggle('short', on); $('shortBtn').classList.toggle('lit', on);
+  ovlKey = ''; subsKey = '';
+  if (!on) {
+    for (const k of ['left', 'top', 'width', 'height']) frameEl.style[k] = '';
+    $('vp').style.width = $('vp').style.height = ''; $('ovl').innerHTML = '';
+    frameEl.style.aspectRatio = '16 / 9';
+    renderInspector(); return;
+  }
+  const open = () => { SHORT.fmt = SHORT.fmt in SHORT.formats ? SHORT.fmt : 'shorts'; seek(shortRange().start); renderInspector(); };
+  if (SHORT.formats) open();
+  else fetch('/api/short/formats').then((r) => r.json()).then((j) => { SHORT.formats = j.formats; open(); })
+    .catch(() => { SHORT.on = false; document.body.classList.remove('short'); status('쇼츠·릴스 정보를 불러오지 못했어요.', true); });
+}
+$('shortBtn').onclick = () => setShort(!SHORT.on);
+function renderShortPanel() {
+  const box = $('inspector'), c = shortCfg(), f = shortFmt();
+  const result = $('result') ? $('result').outerHTML : '<div id="result"></div>';
+  const tab = (k) => `<button data-f="${k}" class="${SHORT.fmt === k ? 'lit' : ''}">${(SHORT.formats[k] || {}).label || k}</button>`;
+  box.innerHTML = `<div id="shortPanel"><h2>쇼츠 · 릴스</h2>
+    <div class="tabs">${tab('shorts')}${tab('reels')}</div>
+    <p class="tip">세로(9:16) 화면에서 앱 버튼·캡션에 가려지는 곳(빗금)을 보면서 구도를 잡고, 포맷마다 따로 저장돼요. 미리보기를 끌면 위치, 휠을 굴리면 확대. 앱 화면은 직접 만든 목업이라 실제 앱과 조금 다를 수 있어요.</p>
+    <label class="check"><input type="checkbox" id="shOvl" ${SHORT.ovl ? 'checked' : ''}> 앱 화면(버튼·캡션) 겹쳐 보기</label>
+    <label class="check"><input type="checkbox" id="shZones" ${SHORT.zones ? 'checked' : ''}> 가려지는 영역 표시</label>
+    <label class="check"><input type="checkbox" id="shSafe" ${c.safe ? 'checked' : ''}> 자막을 안전 영역 안으로 옮기기</label>
+    <h2 class="sub">화면 맞추기</h2>
+    ${field('방식', `<select id="shFit"><option value="0" ${c.fit ? '' : 'selected'}>꽉 채우기 (자르기)</option><option value="1" ${c.fit ? 'selected' : ''}>전체 보이게 (위아래 흐린 배경)</option></select>`)}
+    ${c.fit ? '' : `${field(`확대 <b id="shZoomV">×${c.zoom.toFixed(2)}</b>`, `<input type="range" id="shZoom" min="1" max="5" step="0.01" value="${c.zoom}">`)}
+    ${field('가로 위치', `<input type="range" id="shCx" min="0" max="1" step="0.005" value="${c.cx}">`)}
+    ${field('세로 위치', `<input type="range" id="shCy" min="0" max="1" step="0.005" value="${c.cy}">`)}
+    <div class="row" style="margin-bottom:10px"><button id="shReset">구도 되돌리기</button></div>`}
+    <h2 class="sub">길이 줄이기</h2>
+    <div class="row" style="margin-bottom:6px"><span class="muted">시작</span><input type="number" id="shStart" step="0.1" min="0" style="width:70px">
+      <span class="muted">끝</span><input type="number" id="shEnd" step="0.1" min="0" style="width:70px"></div>
+    <div class="row"><button id="shIn" title="재생 위치를 시작으로">[ 시작=지금</button><button id="shOut" title="재생 위치를 끝으로">지금=끝 ]</button><button id="shAll">전체</button><button id="shLim">${f.limit}초에 맞추기</button></div>
+    <div id="shLen" class="len"></div>
+    <div class="row"><button id="shExp" class="primary">${f.label} 내보내기</button><button id="shBoth">둘 다 내보내기</button></div>
+    <div class="row" style="margin-top:10px"><button id="shClose">일반 화면으로</button></div>${result}</div>`;
+  const $$ = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
+  box.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { SHORT.fmt = b.dataset.f; ovlKey = ''; subsKey = ''; shortSave(); seek(shortRange().start); renderShortPanel(); }));
+  $$('shOvl', 'onchange', (e) => { SHORT.ovl = e.target.checked; ovlKey = ''; shortSave(); });
+  $$('shZones', 'onchange', (e) => { SHORT.zones = e.target.checked; ovlKey = ''; shortSave(); });
+  $$('shSafe', 'onchange', (e) => { c.safe = e.target.checked; subsKey = ''; shortSave(); });
+  $$('shFit', 'onchange', (e) => { c.fit = e.target.value === '1'; shortSave(); renderShortPanel(); });
+  for (const [id, k] of [['shZoom', 'zoom'], ['shCx', 'cx'], ['shCy', 'cy']]) $$(id, 'oninput', (e) => { c[k] = +e.target.value; shortSync(); shortSave(); });
+  $$('shReset', 'onclick', () => { Object.assign(c, { zoom: 1, cx: 0.5, cy: 0.5 }); shortSave(); renderShortPanel(); });
+  const L = () => projectLength();
+  $$('shStart', 'onchange', (e) => { c.start = clamp(+e.target.value || 0, 0, L()); if (c.end != null && c.end < c.start + 0.2) c.end = null; shortSave(); seek(c.start); shortSync(); });
+  $$('shEnd', 'onchange', (e) => { c.end = clamp(+e.target.value || 0, shortRange().start + 0.2, L()); shortSave(); shortSync(); });
+  $$('shIn', 'onclick', () => { c.start = Math.min(playhead(), L() - 0.2); if (c.end != null && c.end < c.start + 0.2) c.end = null; shortSave(); shortSync(); });
+  $$('shOut', 'onclick', () => { c.end = Math.max(playhead(), shortRange().start + 0.2); shortSave(); shortSync(); });
+  $$('shAll', 'onclick', () => { c.start = 0; c.end = null; shortSave(); seek(0); shortSync(); });
+  $$('shLim', 'onclick', () => { const r = shortRange(); c.end = Math.min(L(), r.start + f.limit); shortSave(); shortSync(); });
+  $$('shClose', 'onclick', () => setShort(false));
+  $$('shExp', 'onclick', () => exportShorts([SHORT.fmt]));
+  $$('shBoth', 'onclick', () => exportShorts(['shorts', 'reels']));
+  shortSync();
+}
+async function exportShorts(fmts) {
+  if (!project.clips.length) { status('타임라인이 비어 있어요.', true); return; }
+  pause();
+  const btns = ['shExp', 'shBoth', 'exportBtn'].map($); btns.forEach((b) => b && (b.disabled = true));
+  const done = [];
+  try {
+    for (const fm of fmts) {
+      const c = SHORT.cfg[fm], lim = SHORT.formats[fm].limit, L = projectLength();
+      const start = clamp(c.start || 0, 0, Math.max(0, L - 0.2)), end = clamp(c.end == null ? L : c.end, start + 0.2, L);
+      if (end - start > lim + 1e-6) throw new Error(`${SHORT.formats[fm].label}는 최대 ${lim}초예요. 길이 줄이기에서 구간을 줄여 주세요. (지금 ${(end - start).toFixed(1)}초)`);
+      status(`${SHORT.formats[fm].label} 내보내는 중… (시간이 걸려요)`);
+      const spec = { format: fm, start, end, zoom: c.zoom, cx: c.cx, cy: c.cy, fit: c.fit, safe_subs: c.safe };
+      const r = await fetch('/api/export/short', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: projectBody(), spec }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '내보내기 실패');
+      done.push({ fm, ...(await r.json()) });
+      if ($('result')) $('result').innerHTML = done.map((o) => `<h2 style="margin-top:14px">${SHORT.formats[o.fm].label} (1080×1920)</h2><a href="${o.url}" download>⬇ ${o.file} 내려받기</a><video controls src="${o.url}"></video>`).join('');
+    }
+    status('완성!');
+  } catch (err) { status(String(err.message || err), true); }
+  finally { btns.forEach((b) => b && (b.disabled = false)); }
+}
 })();
 </script>
 </body>
