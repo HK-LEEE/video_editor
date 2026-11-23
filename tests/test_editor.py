@@ -165,3 +165,199 @@ def test_same_track_overlap_later_clip_wins(api):
     r, g, b = frame_rgb(mp4, 0.5); assert r > 150 and b < 80
     r, g, b = frame_rgb(mp4, 1.5); assert b > 150 and r < 80
     r, g, b = frame_rgb(mp4, 2.5); assert r > 150 and b < 80
+
+
+# ---------------------------------------------------------------- 2단계: 전환 · PiP · 자막
+
+def frame_px(path, t, x, y, size=(32, 24)):
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1",
+                          "-vf", f"scale={size[0]}:{size[1]}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, check=True).stdout
+    img = np.frombuffer(raw, np.uint8).reshape(size[1], size[0], 3)
+    return img[int(y * size[1])][int(x * size[0])].astype(int)
+
+
+def export_to(c, tmp, body, name="o.mp4"):
+    r = c.post("/api/export", json=body)
+    assert r.status_code == 200, r.text
+    mp4 = tmp / name
+    mp4.write_bytes(c.get(r.json()["url"]).content)
+    return mp4
+
+
+def two_clips(c, tmp, transition, dur=1.0):
+    red = upload(c, make_video(tmp / "r.mp4", 3, "red", 500))
+    blue = upload(c, make_video(tmp / "b.mp4", 3, "blue", 900))
+    clips = [
+        {"id": "c1", "track": "v1", "media": red["id"], "src_in": 0, "src_out": 3, "start": 0},
+        {"id": "c2", "track": "v1", "media": blue["id"], "src_in": 0, "src_out": 3, "start": 3,
+         "transition": transition, "transition_dur": dur},
+        {"id": "a", "track": "a1", "media": red["id"], "src_in": 0, "src_out": 3, "start": 0},
+    ]
+    return {"tracks": tracks(), "clips": clips}
+
+
+def test_transition_fade_blends_previous_and_next(api):
+    c, tmp = api
+    mp4 = export_to(c, tmp, two_clips(c, tmp, "fade"))
+    assert probe(mp4)["duration"] == pytest.approx(6, abs=0.15)
+    r, g, b = frame_px(mp4, 2.5, .5, .5); assert r > 150 and b < 80          # 전환 전: 빨강
+    r, g, b = frame_px(mp4, 3.5, .5, .5); assert r > 60 and b > 60           # 전환 중간: 섞임
+    r, g, b = frame_px(mp4, 4.5, .5, .5); assert b > 150 and r < 80          # 전환 뒤: 파랑
+    assert rms(decode(mp4), 0.2, 2.8) > 0.03                                 # 소리는 영향 없음
+
+
+def test_transition_dip_goes_through_black(api):
+    c, tmp = api
+    mp4 = export_to(c, tmp, two_clips(c, tmp, "dip", 1.0))
+    assert frame_px(mp4, 3.5, .5, .5).max() < 60                             # 중간엔 거의 검정
+    r, g, b = frame_px(mp4, 4.5, .5, .5); assert b > 150
+
+
+@pytest.mark.parametrize("kind,left_is_new", [("wipeleft", False), ("wiperight", True)])
+def test_transition_wipe_reveals_from_side(api, kind, left_is_new):
+    c, tmp = api
+    mp4 = export_to(c, tmp, two_clips(c, tmp, kind, 1.0))
+    left, right = frame_px(mp4, 3.5, .1, .5), frame_px(mp4, 3.5, .9, .5)
+    new, old = (left, right) if left_is_new else (right, left)
+    assert new[2] > 150 and new[0] < 80                                      # 새 클립(파랑)이 드러난 쪽
+    assert old[0] > 150 and old[2] < 80                                      # 아직 옛 클립(빨강)
+
+
+@pytest.mark.parametrize("kind,left_is_new", [("slideleft", False), ("slideright", True)])
+def test_transition_slide_moves_new_clip_in(api, kind, left_is_new):
+    c, tmp = api
+    mp4 = export_to(c, tmp, two_clips(c, tmp, kind, 1.0))
+    left, right = frame_px(mp4, 3.5, .1, .5), frame_px(mp4, 3.5, .9, .5)
+    new, old = (left, right) if left_is_new else (right, left)
+    assert new[2] > 150 and old[0] > 150
+    r, g, b = frame_px(mp4, 4.5, .5, .5); assert b > 150 and r < 80
+
+
+def test_transition_without_overlap_fades_from_black(api):
+    c, tmp = api
+    blue = upload(c, make_video(tmp / "b.mp4", 2, "blue", 900))
+    clips = [{"id": "c", "track": "v1", "media": blue["id"], "src_in": 0, "src_out": 2, "start": 0,
+              "transition": "fade", "transition_dur": 1.0}]
+    mp4 = export_to(c, tmp, {"tracks": tracks(), "clips": clips})
+    assert frame_px(mp4, 0.0, .5, .5).max() < 40
+    r, g, b = frame_px(mp4, 1.6, .5, .5); assert b > 150
+
+
+def test_transition_does_not_change_audio_mix_cache(api):
+    c, tmp = api
+    body = two_clips(c, tmp, "none")
+    a = c.post("/api/mix", json=body).content
+    body["clips"][1]["transition"] = "fade"
+    assert c.post("/api/mix", json=body).content == a
+    assert len(list((tmp / "ws" / "cache").glob("mix_*.wav"))) == 1
+
+
+def test_pip_overlays_small_window_over_full(api):
+    c, tmp = api
+    red = upload(c, make_video(tmp / "r.mp4", 3, "red", 500))
+    blue = upload(c, make_video(tmp / "b.mp4", 2, "blue", 900))
+    clips = [
+        {"id": "c1", "track": "v1", "media": red["id"], "src_in": 0, "src_out": 3, "start": 0},
+        {"id": "c2", "track": "v2", "media": blue["id"], "src_in": 0, "src_out": 2, "start": 0.5,
+         "layout": "pip", "pip_x": 0.75, "pip_y": 0.75, "pip_w": 0.4, "pip_border": False},
+    ]
+    mp4 = export_to(c, tmp, {"tracks": tracks(), "clips": clips})
+    assert probe(mp4)["width"] == 320
+    for t, blue_expected in [(0.25, False), (1.5, True), (2.8, False)]:
+        r, g, b = frame_px(mp4, t, .75, .75)
+        assert (b > 150 and r < 80) if blue_expected else (r > 150 and b < 80), t
+    r, g, b = frame_px(mp4, 1.5, .1, .1); assert r > 150 and b < 80          # 나머지는 큰 화면 그대로
+    r, g, b = frame_px(mp4, 1.5, .5, .5); assert r > 150 and b < 80          # PiP 밖(가운데)도 빨강
+
+
+def test_pip_opacity_and_border(api):
+    c, tmp = api
+    red = upload(c, make_video(tmp / "r.mp4", 2, "red", 500))
+    blue = upload(c, make_video(tmp / "b.mp4", 2, "blue", 900))
+    base = {"id": "c2", "track": "v2", "media": blue["id"], "src_in": 0, "src_out": 2, "start": 0,
+            "layout": "pip", "pip_x": 0.5, "pip_y": 0.5, "pip_w": 0.5}
+    full = {"id": "c1", "track": "v1", "media": red["id"], "src_in": 0, "src_out": 2, "start": 0}
+    half = export_to(c, tmp, {"tracks": tracks(), "clips": [full, {**base, "pip_opacity": 0.5, "pip_border": False}]})
+    r, g, b = frame_px(half, 1.0, .5, .5); assert r > 60 and b > 60
+    bordered = export_to(c, tmp, {"tracks": tracks(), "clips": [full, {**base, "pip_border": True}]}, "b2.mp4")
+    r, g, b = frame_px(bordered, 1.0, .252, .5, size=(320, 240)); assert min(r, g, b) > 150   # 흰 테두리
+
+
+def test_pip_and_transition_do_not_change_canvas_size(api):
+    c, tmp = api
+    big = upload(c, make_video(tmp / "big.mp4", 2, "red", size="640x360"))
+    small = upload(c, make_video(tmp / "s.mp4", 2, "blue", size="160x120"))
+    clips = [{"id": "c1", "track": "v1", "media": small["id"], "src_in": 0, "src_out": 2, "start": 0, "layout": "pip"},
+             {"id": "c2", "track": "v2", "media": big["id"], "src_in": 0, "src_out": 2, "start": 0}]
+    mp4 = export_to(c, tmp, {"tracks": tracks(), "clips": clips})
+    assert (probe(mp4)["width"], probe(mp4)["height"]) == (640, 360)          # PiP가 아닌 클립 기준
+
+
+SUBS = [{"id": "s1", "start": 1.0, "end": 2.0, "text": "HELLO", "lang": "en"},
+        {"id": "s2", "start": 2.5, "end": 3.5, "text": "둘째 줄\n자막", "lang": "ko"}]
+
+
+def bright_pixels(path, t):
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    img = np.frombuffer(raw, np.uint8).reshape(-1, 3)
+    return int((img.min(axis=1) > 200).sum())
+
+
+def sub_project(c, tmp, **extra):
+    blue = upload(c, make_video(tmp / "b.mp4", 4, "blue", size="640x360"))
+    clips = [{"id": "c", "track": "v1", "media": blue["id"], "src_in": 0, "src_out": 4, "start": 0}]
+    return {"tracks": tracks(), "clips": clips, "subtitles": SUBS, **extra}
+
+
+def test_subtitles_are_burned_in_only_during_their_cue(api):
+    c, tmp = api
+    mp4 = export_to(c, tmp, sub_project(c, tmp, subtitle_style={"size": 0.15, "y": 0.5}))
+    assert bright_pixels(mp4, 0.5) == 0
+    assert bright_pixels(mp4, 1.5) > 300                                      # 흰 글자
+    assert bright_pixels(mp4, 2.2) == 0
+    assert bright_pixels(mp4, 3.0) > 100
+    assert list((tmp / "ws" / "exports").glob("*.ass")) == []                  # 임시 파일은 지움
+
+
+def test_subtitle_style_color_outline_background_and_position(api):
+    c, tmp = api
+    style = {"size": 0.15, "y": 0.2, "color": "#ff0000", "outline": 0, "bg_opacity": 0}
+    mp4 = export_to(c, tmp, sub_project(c, tmp, subtitle_style=style))
+    r, g, b = frame_px(mp4, 1.5, .5, .5, size=(640, 360)); assert b > 150 and r < 60       # 가운데엔 글자 없음
+    top = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", "1.5", "-i", str(mp4), "-frames:v", "1", "-vf",
+                          "crop=640:120:0:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    img = np.frombuffer(top, np.uint8).reshape(-1, 3)
+    assert ((img[:, 0] > 200) & (img[:, 2] < 80)).sum() > 200                  # 위쪽에 빨간 글자
+    boxed = export_to(c, tmp, sub_project(c, tmp, subtitle_style={"size": 0.15, "y": 0.5, "color": "#ffffff",
+                                                                    "bg_color": "#ff0000", "bg_opacity": 1.0}), "bx.mp4")
+    img = np.frombuffer(subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", "1.5", "-i", str(boxed), "-frames:v", "1",
+                                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout,
+                        np.uint8).reshape(-1, 3)
+    assert ((img[:, 0] > 200) & (img[:, 2] < 80)).sum() > 1500                 # 빨간 배경 상자
+
+
+def test_subtitle_language_filter(api):
+    c, tmp = api
+    only_en = export_to(c, tmp, sub_project(c, tmp, subtitle_lang="en", subtitle_style={"size": 0.15}))
+    assert bright_pixels(only_en, 1.5) > 300 and bright_pixels(only_en, 3.0) == 0   # ko 자막은 빠짐
+
+
+def test_srt_export(api):
+    c, tmp = api
+    body = {"tracks": tracks(), "clips": [], "subtitles": [*SUBS, {"id": "e", "start": 5, "end": 6, "text": "  "}]}
+    r = c.post("/api/subtitles/srt", json=body)
+    assert r.status_code == 200 and "subrip" in r.headers["content-type"]
+    assert r.content.decode("utf-8") == ("1\n00:00:01,000 --> 00:00:02,000\nHELLO\n\n"
+                                         "2\n00:00:02,500 --> 00:00:03,500\n둘째 줄\n자막\n")
+    ko = c.post("/api/subtitles/srt", json={**body, "subtitle_lang": "ko"}).content.decode()
+    assert ko.startswith("1\n00:00:02,500") and "HELLO" not in ko
+
+
+def test_subtitle_ass_generation():
+    from video_editor.subtitles import Cue, SubtitleStyle, to_ass, srt_time, ass_time
+    assert srt_time(3661.5) == "01:01:01,500" and ass_time(3661.5) == "1:01:01.50"
+    ass = to_ass([Cue(id="a", start=0, end=1, text="a{b}\nc")], SubtitleStyle(bg_opacity=0.5, x=0.5, y=0.8), 1000, 500)
+    assert "PlayResX: 1000" in ass and "\\pos(500,400)" in ass and "Style: Box," in ass
+    assert "a(b)\\Nc" in ass and ass.count("Dialogue:") == 2

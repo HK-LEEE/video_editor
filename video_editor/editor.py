@@ -6,6 +6,8 @@
 - 영상 트랙: 아래 트랙부터 쌓이고, 같은 시각에 여러 클립이 있으면 위(목록 뒤쪽) 트랙이 보입니다.
 - 오디오 트랙: 모두 섞입니다. 트랙마다 볼륨·음소거·솔로, 녹이기 효과, 덕킹이 있습니다.
 - 보이스 트랙(voice=True)의 소리가 나올 때 다른 트랙은 duck 만큼 줄어듭니다.
+- 영상 클립은 전환 효과(transition)를 가질 수 있고, layout="pip"이면 아래 영상 위에 작게 겹쳐 보입니다.
+- 자막은 프로젝트의 자막 트랙(subtitles)에 구간별로 들어가고 내보낼 때 영상에 입히거나 SRT로 내보냅니다.
 
 미리듣기(/api/mix)와 내보내기(/api/export)는 같은 render_audio를 씁니다.
 """
@@ -23,13 +25,15 @@ import numpy as np
 import pedalboard as pb
 import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from . import ai_voice
+from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
 
+TRANSITIONS = ("none", "fade", "dip", "wipeleft", "wiperight", "slideleft", "slideright")
 ORIGINAL = "original"
 VOICE_TARGET_DB = -20.0
 DUCK_MAX_DB = 15.0
@@ -209,11 +213,24 @@ class Clip(BaseModel):
     intensity: float = Field(1.0, ge=0.1, le=5.0)
     gain: float = Field(1.0, ge=0.0, le=4.0)
     link: str | None = None
+    # 영상 클립 전용: 이 클립이 시작할 때 아래 화면에서 이 클립으로 넘어가는 효과
+    transition: Literal[TRANSITIONS] = "none"
+    transition_dur: float = Field(0.5, ge=0.1, le=3.0)
+    # 영상 클립 전용: pip이면 아래 영상을 가리지 않고 작은 화면으로 위에 겹칩니다 (x, y는 화면 비율의 가운데 위치)
+    layout: Literal["full", "pip"] = "full"
+    pip_x: float = Field(0.75, ge=0.0, le=1.0)
+    pip_y: float = Field(0.75, ge=0.0, le=1.0)
+    pip_w: float = Field(0.3, ge=0.05, le=1.0)
+    pip_opacity: float = Field(1.0, ge=0.1, le=1.0)
+    pip_border: bool = True
 
 
 class Project(BaseModel):
     tracks: list[Track]
     clips: list[Clip]
+    subtitles: list[Cue] = []
+    subtitle_style: SubtitleStyle = SubtitleStyle()
+    subtitle_lang: str = ""     # 비우면 모든 자막, 지정하면 그 언어(와 언어 없음) 자막만 입힘
 
 
 def project_length(p: Project) -> float:
@@ -317,8 +334,13 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     return peak_limit(mix, SR)
 
 
+VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border"}
+
+
 def project_key(p: Project, ws: Workspace | None = None) -> str:
-    raw = p.model_dump_json()
+    """소리 믹스의 캐시 키. 소리에 영향 없는 자막·전환·PiP 설정은 빼서, 그걸 바꿔도 믹스를 다시 만들지 않습니다."""
+    raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_lang": True,
+                                     "clips": {"__all__": VIDEO_ONLY_CLIP_FIELDS}})
     if ws is not None:  # AI 변환이 끝나면 같은 프로젝트라도 소리가 달라집니다
         raw += "".join("1" if ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists() else "0"
                        for c in p.clips if ai_voice.is_ai_voice(c.voice))
@@ -333,39 +355,136 @@ def mix_file(ws: Workspace, p: Project) -> Path:
 
 
 # ================================================================ 영상 합치기
-
-def video_segments(p: Project, length: float) -> list[tuple[float, float, Clip | None]]:
-    """타임라인을 '이 시간에 보이는 클립' 단위로 나눕니다 (빈 곳은 None = 검은 화면)."""
-    order = [t.id for t in p.tracks if t.kind == "video" and not t.mute]
-    rank = {tid: i for i, tid in enumerate(order)}
-    vclips = [c for c in p.clips if c.track in rank and c.src_out > c.src_in]
-    cuts = sorted({0.0, length, *[c.start for c in vclips], *[c.start + c.src_out - c.src_in for c in vclips]})
-    cuts = [x for x in cuts if 0 <= x <= length]
-    segs: list[tuple[float, float, Clip | None]] = []
-    for a, b in zip(cuts, cuts[1:]):
-        if b - a < 1e-3:
-            continue
-        mid = (a + b) / 2
-        covering = [c for c in vclips if c.start <= mid < c.start + c.src_out - c.src_in]
-        # 위 트랙이 이기고, 같은 트랙에서 겹치면 나중에 시작한 클립이 이김
-        top = max(covering, key=lambda c: (rank[c.track], c.start)) if covering else None
-        if segs and segs[-1][2] is top and abs(segs[-1][1] - a) < 1e-6:
-            segs[-1] = (segs[-1][0], b, top)
-        else:
-            segs.append((a, b, top))
-    return segs
-
+# 검은 바탕 위에 영상 클립을 아래 트랙부터 차례로 겹쳐 올립니다 (overlay).
+# 위 트랙이 아래를 가리고, 같은 트랙에서 겹치면 나중에 시작한 클립이 위입니다. PiP 클립은 항상 맨 위에 올라갑니다.
+# 전환 효과는 새 클립이 시작하는 처음 transition_dur 초 동안 그 클립만 알파(투명도)·위치·가림막을 움직이는 방식이라
+# '그 순간 아래에 보이던 화면'과 자연스럽게 섞입니다.
 
 def canvas_size(ws: Workspace, p: Project) -> tuple[int, int]:
-    for t in p.tracks:
-        for c in p.clips:
-            if c.track == t.id and t.kind == "video":
-                m = ws.meta(c.media)
-                if m.get("width") and m.get("height"):
-                    w, h = m["width"], m["height"]
-                    scale = min(1.0, 1920 / max(w, h))  # 너무 크면 1920 기준으로
-                    return int(w * scale) // 2 * 2, int(h * scale) // 2 * 2
+    for want in ("full", "pip"):
+        for t in p.tracks:
+            for c in p.clips:
+                if c.track == t.id and t.kind == "video" and c.layout == want:
+                    m = ws.meta(c.media)
+                    if m.get("width") and m.get("height"):
+                        w, h = m["width"], m["height"]
+                        scale = min(1.0, 1920 / max(w, h))  # 너무 크면 1920 기준으로
+                        return int(w * scale) // 2 * 2, int(h * scale) // 2 * 2
     return 1280, 720
+
+
+def _f(x: float) -> str:
+    return f"{x:.4f}"
+
+
+def video_layers(ws: Workspace, p: Project) -> list[Clip]:
+    """아래에서 위로 그릴 순서의 영상 클립."""
+    rank = {t.id: i for i, t in enumerate(p.tracks) if t.kind == "video" and not t.mute}
+    clips = [c for c in p.clips if c.track in rank and c.src_out > c.src_in]
+    return sorted(clips, key=lambda c: (c.layout == "pip", rank[c.track], c.start))
+
+
+def _tail_extension(p: Project, c: Clip, layers: list[Clip]) -> float:
+    """같은 트랙에서 바로 이어 붙은 다음 클립이 전환 효과를 가지면, 이 클립 끝을 그만큼 늘려 겹쳐 줍니다."""
+    if c.layout != "full":
+        return 0.0
+    e = c.start + c.src_out - c.src_in
+    nxt = [k for k in layers if k.track == c.track and k.layout == "full" and k.transition != "none"
+           and abs(k.start - e) <= 0.05]
+    return max((min(k.transition_dur, k.src_out - k.src_in) for k in nxt), default=0.0)
+
+
+def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) -> tuple[list[str], str]:
+    """(ffmpeg 입력 인자, filter_complex 그래프). 마지막 출력 라벨은 [vbase]."""
+    layers = video_layers(ws, p)
+    inputs: list[str] = []
+    parts = [f"color=c=black:s={W}x{H}:r={FPS}:d={_f(length)},format=yuv420p[cv0]"]
+    cur, n_in, n_lbl = "cv0", 0, 0
+
+    def lbl(prefix: str) -> str:
+        nonlocal n_lbl
+        n_lbl += 1
+        return f"{prefix}{n_lbl}"
+
+    def overlay(top: str, start: float, end: float, x: str = "0", y: str = "0") -> None:
+        nonlocal cur
+        out = lbl("cv")
+        parts.append(f"[{cur}][{top}]overlay=x='{x}':y='{y}':format=auto:eof_action=pass:"
+                     f"enable='gte(t,{_f(start)})*lt(t,{_f(end)})'[{out}]")
+        cur = out
+
+    for c in layers:
+        m = ws.meta(c.media)
+        if c.layout == "pip" and m["kind"] == "audio":
+            continue
+        dur = c.src_out - c.src_in
+        ext = _tail_extension(p, c, layers)
+        real = min(ext, max(0.0, m["duration"] - c.src_out)) if m["kind"] != "audio" else ext
+        k, n_in = n_in, n_in + 1
+        inputs += ["-ss", f"{c.src_in:.4f}", "-t", _f(dur + real)]
+        if m["kind"] == "audio":  # 영상 트랙에 소리 파일만 있으면 검은 화면
+            inputs += ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={FPS}"]
+        else:
+            inputs += ["-i", str(ws.media_file(c.media))]
+        chain = [f"trim=duration={_f(dur + real)}", "setpts=PTS-STARTPTS", f"fps={FPS}"]
+        if c.layout == "pip":
+            pw = max(16, int(W * c.pip_w) // 2 * 2)
+            chain.append(f"scale={pw}:-2")
+            if c.pip_border:
+                chain.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t={max(2, W // 240)}")
+            chain.append("format=rgba")
+            if c.pip_opacity < 1:
+                chain.append(f"colorchannelmixer=aa={c.pip_opacity:.3f}")
+            chain.append("setsar=1")
+        else:
+            chain += [f"scale={W}:{H}:force_original_aspect_ratio=decrease",
+                      f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black", "setsar=1", "format=yuva420p"]
+        if ext - real > 1e-3:  # 이어질 원본이 모자라면 마지막 화면을 붙잡고 있습니다
+            chain.append(f"tpad=stop_mode=clone:stop_duration={_f(ext - real + 0.05)}")
+        s, e = c.start, c.start + dur + ext
+        d = min(c.transition_dur, dur) if c.transition != "none" else 0.0
+        kind = c.transition if c.layout == "full" else ("fade" if d else "none")
+        src = lbl("s")
+        pos0 = _pip_xy(c) if c.layout == "pip" else ("0", "0")
+
+        if kind == "none":
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            overlay(src, s, e, *pos0)
+        elif kind == "fade":
+            chain.append(f"fade=t=in:st=0:d={_f(d)}:alpha=1")
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            overlay(src, s, e, *pos0)
+        elif kind == "dip":
+            chain.append(f"fade=t=in:st={_f(d / 2)}:d={_f(d / 2)}:alpha=1")
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            blk = lbl("b")  # 아래 화면이 검게 어두워졌다가 새 화면이 떠오릅니다
+            parts.append(f"color=c=black:s={W}x{H}:r={FPS}:d={_f(d)},format=yuva420p,"
+                         f"fade=t=in:st=0:d={_f(d / 2)}:alpha=1,setpts=PTS-STARTPTS+{_f(s)}/TB[{blk}]")
+            overlay(blk, s, s + d)
+            overlay(src, s, e)
+        else:  # 가림막(wipe)·밀기(slide): 처음 d초만 따로 떼서 움직이고, 나머지는 그대로 얹습니다
+            a, b, head, tail = lbl("a"), lbl("b"), lbl("h"), lbl("t")
+            parts.append(f"[{k}:v]{','.join(chain)},split[{a}][{b}]")
+            head_chain = f"[{a}]trim=duration={_f(d)},setpts=PTS-STARTPTS"
+            if kind.startswith("wipe"):
+                x = f"W*(1-clip(T/{_f(d)},0,1))"
+                cond = f"gt(X,{x})" if kind == "wipeleft" else f"lt(X,W-{x})"
+                head_chain += f",geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if({cond},255,0)'"
+                ox = "0"
+            else:
+                sign = "" if kind == "slideleft" else "-"
+                ox = f"{sign}W*(1-min(1,(t-{_f(s)})/{_f(d)}))"
+            parts.append(f"{head_chain},setpts=PTS+{_f(s)}/TB[{head}]")
+            parts.append(f"[{b}]trim=start={_f(d)},setpts=PTS-STARTPTS+{_f(s + d)}/TB[{tail}]")
+            overlay(head, s, s + d, ox)
+            overlay(tail, s + d, e)
+    return inputs, ";".join(parts) + f";[{cur}]format=yuv420p[vbase]"
+
+
+def _pip_xy(c: Clip) -> tuple[str, str]:
+    """PiP 화면의 위치 (가운데 기준, 화면 밖으로 나가지 않게)."""
+    return (f"max(0,min(main_w-overlay_w,main_w*{c.pip_x:.4f}-overlay_w/2))",
+            f"max(0,min(main_h-overlay_h,main_h*{c.pip_y:.4f}-overlay_h/2))")
 
 
 def export_video(ws: Workspace, p: Project) -> Path:
@@ -378,38 +497,30 @@ def export_video(ws: Workspace, p: Project) -> Path:
         raise HTTPException(409, f"AI 변환이 아직 안 된 클립이 {len(pending)}개 있어요. 속성 패널에서 'AI 변환 만들기'를 먼저 눌러 주세요.")
     wav = mix_file(ws, p)
     W, H = canvas_size(ws, p)
-    segs = video_segments(p, length)
 
-    inputs: list[str] = []
-    parts: list[str] = []
-    n_in = 0
-    for i, (a, b, c) in enumerate(segs):
-        dur = b - a
-        if c is None:
-            parts.append(f"color=c=black:s={W}x{H}:r={FPS}:d={dur:.4f},format=yuv420p,setsar=1[s{i}]")
-        else:
-            k = n_in
-            n_in += 1
-            src = c.src_in + (a - c.start)
-            m = ws.meta(c.media)
-            inputs += ["-ss", f"{src:.4f}", "-t", f"{dur:.4f}"]
-            if m["kind"] == "audio":  # 영상 트랙에 소리 파일만 있으면 검은 화면
-                inputs += ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={FPS}"]
-            else:
-                inputs += ["-i", str(ws.media_file(c.media))]
-            parts.append(
-                f"[{k}:v]trim=duration={dur:.4f},setpts=PTS-STARTPTS,"
-                f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
-                f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={FPS},format=yuv420p[s{i}]")
-    audio_idx = n_in
-    graph = ";".join(parts) + ";" + "".join(f"[s{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0[v]"
+    # PiP 클립에서도 모양이 안 틀어지게: PiP는 layout이 pip인 클립만 겹쳐지고 나머지는 위 규칙대로 쌓입니다
+    inputs, graph = build_video_graph(ws, p, length, W, H)
+    audio_idx = sum(1 for x in inputs if x == "-ss")
+    out_label = "vbase"
+    uid8 = uuid.uuid4().hex[:8]
+    exports = ws.root / "exports"
+    ass_name = None
+    if active_cues(p.subtitles, p.subtitle_lang, length):
+        ass_name = f"subs_{uid8}.ass"
+        (exports / ass_name).write_text(to_ass(p.subtitles, p.subtitle_style, W, H, p.subtitle_lang, length), encoding="utf-8")
+        graph += f";[vbase]ass=filename={ass_name}[vout]"   # ffmpeg를 exports 폴더에서 돌려서 경로 이스케이프가 필요 없습니다
+        out_label = "vout"
 
-    out = ws.root / "exports" / f"video_editor_{uuid.uuid4().hex[:8]}.mp4"
-    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *inputs, "-i", str(wav),
-           "-filter_complex", graph, "-map", "[v]", "-map", f"{audio_idx}:a",
+    out = exports / f"video_editor_{uid8}.mp4"
+    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *inputs, "-i", str(wav.resolve()),
+           "-filter_complex", graph, "-map", f"[{out_label}]", "-map", f"{audio_idx}:a",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-t", f"{length:.4f}", "-movflags", "+faststart", str(out)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+           "-c:a", "aac", "-b:a", "192k", "-t", f"{length:.4f}", "-movflags", "+faststart", str(out.resolve())]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports)
+    finally:
+        if ass_name:
+            (exports / ass_name).unlink(missing_ok=True)
     if r.returncode != 0:
         raise HTTPException(500, f"내보내기 실패: {r.stderr[-800:]}")
     return out
@@ -500,6 +611,11 @@ def make_router(ws: Workspace) -> APIRouter:
     def export(p: Project):
         out = export_video(ws, p)
         return {"file": out.name, "url": f"/api/exports/{out.name}"}
+
+    @router.post("/subtitles/srt")
+    def subtitles_srt(p: Project):
+        return Response(to_srt(p.subtitles, p.subtitle_lang), media_type="application/x-subrip; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="subtitles.srt"'})
 
     @router.get("/exports/{name}")
     def get_export(name: str):
