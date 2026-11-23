@@ -192,5 +192,30 @@ def process(audio: np.ndarray, settings: VoiceSettings, sr: int = SAMPLE_RATE,
     y = apply_effects(y, sr, settings.effects)
 
     y = y * (in_rms / _rms(y))  # 원본과 비슷한 크기로
-    y = pb.Pedalboard([pb.Limiter(threshold_db=-1.0)])(y.astype(np.float32), sr)
-    return np.clip(y, -1.0, 1.0).astype(np.float32)
+    return peak_limit(y, sr)
+
+
+def peak_limit(x: np.ndarray, sr: int = SAMPLE_RATE, ceiling_db: float = -1.0,
+               release_s: float = 0.08) -> np.ndarray:
+    """넘치는 봉우리만 눌러 주는 리미터 (소리를 키우지는 않음).
+
+    pedalboard.Limiter는 문턱만큼 소리를 키우는 메이크업 게인이 들어 있어 쓰지 않습니다.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    ceiling = 10 ** (ceiling_db / 20)
+    hop = max(1, int(sr * 0.002))
+    n = int(np.ceil(x.size / hop))
+    if n == 0:
+        return x
+    peaks = np.pad(np.abs(x), (0, n * hop - x.size)).reshape(n, hop).max(axis=1)
+    need = np.minimum(1.0, ceiling / np.maximum(peaks, 1e-9))   # 블록마다 필요한 감쇠
+    rel = np.exp(-hop / sr / release_s)
+    gain = np.empty(n, dtype=np.float32)
+    g = 1.0
+    for i in range(n):  # 바로 줄이고 천천히 회복
+        g = need[i] if need[i] < g else rel * g + (1 - rel) * need[i]
+        gain[i] = g
+    # 다음 블록이 더 크면 미리 줄여 두기 (경계에서 넘치지 않도록)
+    gain = np.minimum(gain, np.concatenate([gain[1:], gain[-1:]]))
+    g_s = np.interp(np.arange(x.size) / hop, np.arange(n), gain).astype(np.float32)
+    return np.clip(x * g_s, -ceiling, ceiling).astype(np.float32)

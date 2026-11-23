@@ -76,7 +76,10 @@
     </div>
     <div id="tlWrap"><canvas id="tl" height="150"></canvas></div>
     <p class="hint">타임라인을 눌러 위치를 옮기고, 구간을 끌어 옮기거나 양 끝을 끌어 다듬으세요.
-      <kbd>Space</kbd> 재생 · <kbd>R</kbd> 녹음 · <kbd>S</kbd> 재생 위치에서 자르기 · <kbd>Delete</kbd> 구간 지우기</p>
+      <br><kbd>Space</kbd> 재생 · <kbd>←</kbd><kbd>→</kbd> 0.1초 이동 (<kbd>Shift</kbd> 1초) · <kbd>,</kbd><kbd>.</kbd> 한 프레임 ·
+      <kbd>[</kbd><kbd>]</kbd> 이전/다음 구간 경계 · <kbd>Home</kbd><kbd>End</kbd> 처음/끝 ·
+      <kbd>⌥ Option</kbd>+<kbd>←</kbd><kbd>→</kbd> 선택 구간을 0.05초씩 옮기기 (<kbd>Shift</kbd> 0.5초) ·
+      <kbd>R</kbd> 녹음 · <kbd>S</kbd> 자르기 · <kbd>Delete</kbd> 지우기</p>
   </section>
 
   <section class="panel" id="clipPanel" hidden>
@@ -102,6 +105,22 @@
     </div>
   </section>
 
+  <section class="panel" id="blendPanel" hidden>
+    <strong>영상에 녹이기</strong>
+    <p class="hint" style="margin:4px 0 12px">마이크 녹음은 영상 속 소리보다 건조하고(공간 울림 없음), 크기가 들쭉날쭉하고, 말 사이에 방 잡음이 깔려서 따로 노는 느낌이 납니다. 아래 처리는 모든 구간에 함께 적용되고, 미리듣기와 내보내기 결과가 같습니다.</p>
+    <div class="grid">
+      <label class="field"><span>공간감 (리버브) <b id="roomVal"></b></span>
+        <input type="range" id="room" min="0" max="1" step="0.05"></label>
+      <label class="field"><span>목소리 나올 때 원본 소리 줄이기 <b id="duckVal"></b></span>
+        <input type="range" id="duck" min="0" max="1" step="0.05"></label>
+      <div class="field"><span>다듬기</span>
+        <label class="inline"><input type="checkbox" id="level"> 목소리 크기 고르게</label>
+        <label class="inline"><input type="checkbox" id="gate"> 말 사이 마이크 잡음 줄이기</label>
+        <label class="inline"><input type="checkbox" id="tone"> 톤 다듬기 (웅웅거림 컷, 압축)</label>
+      </div>
+    </div>
+  </section>
+
   <section class="panel" id="exportPanel" hidden>
     <div class="row">
       <button id="exportBtn" class="primary">영상으로 내보내기 (mp4)</button>
@@ -118,7 +137,8 @@
   const RULER = 24, TRACK_Y = 34, TRACK_H = 100, EDGE = 7;
 
   // ------------------------------------------------------------ 상태
-  let state = { video: null, takes: {}, clips: [], origVol: 0, latency: 0, zoom: 80, monitor: false };
+  const DEFAULT_BLEND = { room: 0.25, duck: 0.5, level: true, gate: true, tone: true };
+  let state = { video: null, takes: {}, clips: [], origVol: 0.3, latency: 0, zoom: 80, monitor: false, blend: { ...DEFAULT_BLEND } };
   let selected = null;
   const STORE = 'voxshift.studio.v1';
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch {} };
@@ -160,39 +180,66 @@
     return out;
   }
 
-  // ------------------------------------------------------------ 미리듣기 (영상 시간에 맞춰 예약 재생)
-  let playing = [];
-  function stopVoices() { playing.forEach((n) => { try { n.stop(); } catch {} }); playing = []; }
-  function scheduleVoices(only) {
-    stopVoices();
-    if (video.paused) return;
-    const ac = audioCtx(); ac.resume();
-    const t = video.currentTime;
-    for (const c of state.clips) {
-      if (only && c !== only) continue;
-      if (clipEnd(c) <= t) continue;
-      const entry = loadBuffer(c);
-      if (!entry.buffer) { entry.promise.then(() => { if (!video.paused) scheduleVoices(only); }); continue; }
-      const delay = Math.max(0, c.start - t);
-      const offset = c.src_in + Math.max(0, t - c.start);
-      const dur = c.src_out - offset;
-      if (dur <= 0) continue;
-      const src = ac.createBufferSource(); src.buffer = entry.buffer;
-      const g = ac.createGain(); g.gain.value = c.gain;
-      src.connect(g).connect(ac.destination);
-      src.start(ac.currentTime + delay, offset, dur);
-      playing.push(src);
+  // ------------------------------------------------------------ 미리듣기
+  // 서버가 내보내기와 똑같이 섞은 오디오(목소리 + 원본 소리 + 녹이기 처리)를 영상과 맞춰 재생합니다.
+  // 영상 자체 소리는 끄고, 녹음 중 모니터할 때만 켭니다.
+  const mixBody = (only) => ({
+    video_id: state.video.id, original_volume: state.origVol, blend: state.blend,
+    clips: state.clips.filter((c) => !only || c === only)
+      .map(({ take_id, src_in, src_out, start, voice, intensity, gain }) => ({ take_id, src_in, src_out, start, voice, intensity, gain })),
+  });
+  const mixes = new Map();   // key -> {promise, buffer}
+  function ensureMix(only) {
+    const body = mixBody(only), key = JSON.stringify(body);
+    if (!mixes.has(key)) {
+      if (mixes.size > 12) mixes.delete(mixes.keys().next().value);
+      const entry = { key, buffer: null };
+      entry.promise = fetch('/api/mix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: key })
+        .then((r) => { if (!r.ok) throw new Error('미리듣기를 만들지 못했습니다'); return r.arrayBuffer(); })
+        .then((ab) => audioCtx().decodeAudioData(ab))
+        .then((buf) => (entry.buffer = buf))
+        .catch((e) => { mixes.delete(key); status(e.message, true); throw e; });
+      mixes.set(key, entry);
     }
+    return mixes.get(key);
+  }
+  let playing = [], waitingMix = false;
+  function stopVoices() { playing.forEach((n) => { try { n.stop(); } catch {} }); playing = []; }
+  function startMixAt(buf) {
+    stopVoices();
+    const ac = audioCtx(); ac.resume();
+    const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination);
+    const t = video.currentTime;
+    if (t < buf.duration) { src.start(ac.currentTime, t); playing.push(src); }
+  }
+  async function scheduleVoices(only) {
+    if (video.paused || recording) return;
+    const entry = ensureMix(only);
+    if (entry.buffer) { startMixAt(entry.buffer); return; }
+    // 아직 준비 안 됐으면 잠깐 멈췄다가 준비되면 이어서 재생
+    waitingMix = true; video.pause(); status('미리듣기 준비 중…');
+    try { await entry.promise; status(''); await video.play(); } catch {} finally { waitingMix = false; }
+  }
+  // 편집 후에는 잠시 기다렸다가 새로 섞어 두고, 재생 중이면 바로 갈아끼웁니다
+  let refreshTimer = 0;
+  function refreshMix() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      if (!state.video) return;
+      const entry = ensureMix(soloClip);
+      entry.promise.then((buf) => { if (!video.paused && !recording && ensureMix(soloClip) === entry) startMixAt(buf); }).catch(() => {});
+    }, 450);
   }
   let soloClip = null;
   video.addEventListener('playing', () => { if (!recording) scheduleVoices(soloClip); });
-  video.addEventListener('pause', () => { stopVoices(); soloClip = null; $('playBtn').textContent = '▶ 재생'; });
+  video.addEventListener('pause', () => { stopVoices(); if (!waitingMix) { soloClip = null; $('playBtn').textContent = '▶ 재생'; } });
   video.addEventListener('play', () => { $('playBtn').textContent = '⏸ 정지'; });
   video.addEventListener('ended', () => { if (recording) stopRecording(); });
   video.addEventListener('seeked', () => { if (!video.paused && !recording) scheduleVoices(soloClip); });
   function applyVolume() {
-    video.volume = Math.min(1, state.origVol);
-    video.muted = state.origVol === 0 || (recording && !state.monitor);
+    const monitoring = recording && state.monitor;
+    video.muted = !monitoring;
+    video.volume = Math.min(1, state.origVol || 0.7);
   }
 
   // ------------------------------------------------------------ 영상 올리기
@@ -211,23 +258,25 @@
       if (!r.ok) throw new Error((await r.json()).detail || '업로드 실패');
       const v = await r.json();
       state = { ...state, video: v, takes: {}, clips: [] };
-      if (!v.has_audio) state.origVol = 0;
+      if (!v.has_audio) state.origVol = 0; else if (!state.origVol) state.origVol = 0.3;
       selected = null; save(); openEditor();
     } catch (e) { drop.textContent = '실패: ' + e.message + ' (다시 눌러 고르세요)'; }
   }
   function openEditor() {
     $('uploadPanel').hidden = true;
-    ['editor', 'exportPanel'].forEach((id) => $(id).hidden = false);
+    ['editor', 'blendPanel', 'exportPanel'].forEach((id) => $(id).hidden = false);
     video.src = `/api/videos/${state.video.id}`;
     $('origVol').value = state.origVol; $('latency').value = state.latency;
     $('zoom').value = state.zoom; $('monitor').checked = state.monitor;
     $('origVol').disabled = state.video.has_audio === false;
-    applyVolume(); state.clips.forEach(loadBuffer); selectClip(null); resize();
+    state.blend = { ...DEFAULT_BLEND, ...(state.blend || {}) };
+    showBlend();
+    applyVolume(); state.clips.forEach(loadBuffer); selectClip(null); resize(); refreshMix();
   }
   $('newVideoBtn').onclick = () => {
     if (state.clips.length && !confirmLeave()) return;
     video.pause(); state = { ...state, video: null, takes: {}, clips: [] }; save();
-    $('uploadPanel').hidden = false; ['editor', 'clipPanel', 'exportPanel'].forEach((id) => $(id).hidden = true);
+    $('uploadPanel').hidden = false; ['editor', 'clipPanel', 'blendPanel', 'exportPanel'].forEach((id) => $(id).hidden = true);
     drop.textContent = '영상을 여기로 끌어 놓거나 눌러서 고르세요 (mp4, mov, webm)'; $('result').innerHTML = '';
   };
   // 브라우저 확인창 대신 두 번 누르기로 확인
@@ -255,7 +304,7 @@
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.onstart = async () => {
       recPerf = performance.now(); recT0 = video.currentTime;
-      video.addEventListener('playing', () => { playPerf = performance.now(); if (state.monitor) scheduleVoices(); }, { once: true });
+      video.addEventListener('playing', () => { playPerf = performance.now(); }, { once: true });
       await video.play();
     };
     recorder.onstop = finishRecording;
@@ -282,7 +331,7 @@
       if (start < 0) { src_in = -start; start = 0; }
       const c = { id: uid(), take_id: take.id, src_in, src_out: take.duration, start, voice: lastVoice, intensity: lastIntensity, gain: 1 };
       if (clipLen(c) > 0.05) { state.clips.push(c); loadBuffer(c); selectClip(c); }
-      save(); status('녹음을 타임라인에 넣었어요.'); draw();
+      save(); status('녹음을 타임라인에 넣었어요.'); draw(); refreshMix();
     } catch (e) { status(e.message, true); }
   }
   $('recBtn').onclick = startRecording;
@@ -300,7 +349,7 @@
     draw();
   }
   const updateClipPos = () => selected && ($('clipPos').textContent = `${fmt(selected.start)} – ${fmt(clipEnd(selected))} (${clipLen(selected).toFixed(1)}초)`);
-  function changed(c) { loadBuffer(c); save(); updateClipPos(); draw(); if (!video.paused) scheduleVoices(soloClip); }
+  function changed(c) { loadBuffer(c); save(); updateClipPos(); draw(); refreshMix(); }
 
   fetch('/api/voices').then((r) => r.json()).then((vs) => {
     $('voice').innerHTML = vs.map((v) => `<option value="${v.name}">${v.label}</option>`).join('');
@@ -310,7 +359,7 @@
   $('intensity').oninput = (e) => { $('intVal').textContent = (+e.target.value).toFixed(1); };
   $('intensity').onchange = (e) => { if (!selected) return; selected.intensity = lastIntensity = +e.target.value; changed(selected); };
   $('gain').oninput = (e) => { if (!selected) return; selected.gain = +e.target.value; $('gainVal').textContent = Math.round(selected.gain * 100) + '%'; changed(selected); };
-  $('applyAllBtn').onclick = () => { if (!selected) return; state.clips.forEach((c) => { c.voice = selected.voice; c.intensity = selected.intensity; loadBuffer(c); }); save(); draw(); status('모든 구간에 같은 목소리를 적용했어요.'); };
+  $('applyAllBtn').onclick = () => { if (!selected) return; state.clips.forEach((c) => { c.voice = selected.voice; c.intensity = selected.intensity; loadBuffer(c); }); save(); draw(); refreshMix(); status('모든 구간에 같은 목소리를 적용했어요.'); };
 
   function splitAt(t) {
     const c = selected && t > selected.start + 0.05 && t < clipEnd(selected) - 0.05 ? selected
@@ -324,8 +373,7 @@
   }
   function removeSelected() {
     if (!selected) return;
-    state.clips.splice(state.clips.indexOf(selected), 1); selectClip(null); save(); draw();
-    if (!video.paused) scheduleVoices();
+    state.clips.splice(state.clips.indexOf(selected), 1); selectClip(null); save(); draw(); refreshMix();
   }
   $('splitBtn').onclick = () => splitAt(video.currentTime);
   $('delBtn').onclick = removeSelected;
@@ -344,12 +392,53 @@
 
   // ------------------------------------------------------------ 컨트롤
   $('playBtn').onclick = () => { audioCtx().resume(); soloClip = null; video.paused ? video.play() : video.pause(); };
-  $('origVol').oninput = (e) => { state.origVol = +e.target.value; applyVolume(); save(); };
+  $('origVol').oninput = (e) => { state.origVol = +e.target.value; applyVolume(); save(); refreshMix(); };
+
+  // ------------------------------------------------------------ 영상에 녹이기
+  function showBlend() {
+    const b = state.blend;
+    $('room').value = b.room; $('duck').value = b.duck;
+    $('level').checked = b.level; $('gate').checked = b.gate; $('tone').checked = b.tone;
+    $('roomVal').textContent = Math.round(b.room * 100) + '%';
+    $('duckVal').textContent = b.duck ? '-' + Math.round(15 * b.duck) + 'dB' : '끔';
+  }
+  ['room', 'duck'].forEach((k) => $(k).oninput = (e) => { state.blend[k] = +e.target.value; showBlend(); save(); refreshMix(); });
+  ['level', 'gate', 'tone'].forEach((k) => $(k).onchange = (e) => { state.blend[k] = e.target.checked; save(); refreshMix(); });
   $('latency').onchange = (e) => { state.latency = +e.target.value || 0; save(); };
   $('monitor').onchange = (e) => { state.monitor = e.target.checked; applyVolume(); save(); };
   $('zoom').oninput = (e) => { state.zoom = +e.target.value; save(); resize(); };
+  const FRAME = 1 / 30;
+  function seekTo(t) { video.currentTime = Math.min(duration(), Math.max(0, t)); }
+  function edges() {
+    const xs = [0, duration()];
+    state.clips.forEach((c) => xs.push(c.start, clipEnd(c)));
+    return [...new Set(xs.map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
+  }
+  function nudgeSelected(dt) {
+    if (!selected) { status('먼저 옮길 구간을 고르세요.', true); return; }
+    selected.start = Math.max(0, selected.start + dt); changed(selected);
+  }
+  // 슬라이더를 만진 뒤에도 화살표가 타임라인을 움직이도록 포커스를 풀어 줌
+  document.addEventListener('pointerup', () => { const el = document.activeElement; if (el && (el.type === 'range' || el.type === 'checkbox')) el.blur(); });
   document.addEventListener('keydown', (e) => {
-    if (!state.video || e.target.matches('input, select, textarea')) return;
+    if (!state.video || e.target.matches('input[type=number], input[type=text], select, textarea')) return;
+    const k = e.key;
+    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      e.preventDefault();
+      const dir = k === 'ArrowLeft' ? -1 : 1;
+      if (e.altKey) nudgeSelected(dir * (e.shiftKey ? 0.5 : 0.05));       // 구간 미세 이동
+      else seekTo(video.currentTime + dir * (e.shiftKey ? 1 : 0.1));      // 0.1초 / 1초
+      return;
+    }
+    if (k === ',' || k === '.') { e.preventDefault(); video.pause(); seekTo(video.currentTime + (k === ',' ? -FRAME : FRAME)); return; }
+    if (k === 'Home') { e.preventDefault(); seekTo(0); return; }
+    if (k === 'End') { e.preventDefault(); seekTo(duration()); return; }
+    if (k === '[' || k === ']') {
+      e.preventDefault(); const t = video.currentTime, xs = edges();
+      seekTo(k === '[' ? ([...xs].reverse().find((x) => x < t - 0.02) ?? 0) : (xs.find((x) => x > t + 0.02) ?? duration()));
+      return;
+    }
+    if (e.target.matches('input')) return;   // 슬라이더 위에서는 나머지 단축키 무시
     if (e.code === 'Space') { e.preventDefault(); $('playBtn').click(); }
     else if (e.key === 'r' || e.key === 'R') startRecording();
     else if (e.key === 's' || e.key === 'S') splitAt(video.currentTime);
@@ -443,7 +532,7 @@
     } else c.src_out = Math.min(take.duration, Math.max(o.src_in + 0.05, o.src_out + dt));
     updateClipPos(); draw();
   });
-  canvas.addEventListener('pointerup', () => { if (drag) { drag = null; save(); if (!video.paused) scheduleVoices(soloClip); } });
+  canvas.addEventListener('pointerup', () => { if (drag) { drag = null; save(); refreshMix(); } });
 
   // ------------------------------------------------------------ 시간 표시
   (function tick() {
@@ -463,8 +552,7 @@
     if (!state.clips.length) { status('먼저 녹음해서 구간을 만들어 주세요.', true); return; }
     $('exportBtn').disabled = true; status('목소리를 변조하고 영상에 입히는 중… (길이에 따라 몇십 초 걸려요)');
     try {
-      const body = { video_id: state.video.id, original_volume: state.origVol,
-        clips: state.clips.map(({ take_id, src_in, src_out, start, voice, intensity, gain }) => ({ take_id, src_in, src_out, start, voice, intensity, gain })) };
+      const body = mixBody(null);
       const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!r.ok) throw new Error((await r.json()).detail || '내보내기 실패');
       const out = await r.json();

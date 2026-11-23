@@ -58,7 +58,8 @@ def test_full_dub_flow(client):
         {"take_id": t["id"], "src_in": 0, "src_out": 0.7, "start": 0.5, "voice": "deep"},
         {"take_id": t["id"], "src_in": 0.7, "src_out": 1.5, "start": 2.0, "voice": "chipmunk", "intensity": 2},
     ]
-    out = c.post("/api/export", json={"video_id": v["id"], "clips": clips, "original_volume": 0}).json()
+    dry = {"room": 0, "duck": 0, "gate": False, "tone": False, "level": False}
+    out = c.post("/api/export", json={"video_id": v["id"], "clips": clips, "original_volume": 0, "blend": dry}).json()
     mp4 = tmp / "out.mp4"
     mp4.write_bytes(c.get(out["url"]).content)
     assert has_audio(mp4)
@@ -77,7 +78,7 @@ def test_export_mixes_original_audio(client):
     c, tmp = client
     video = make_video(tmp / "v.mp4", seconds=2)
     v = c.post("/api/videos", files={"file": ("v.mp4", video.read_bytes(), "video/mp4")}).json()
-    out = c.post("/api/export", json={"video_id": v["id"], "clips": [], "original_volume": 0.5}).json()
+    out = c.post("/api/export", json={"video_id": v["id"], "clips": [], "original_volume": 0.5}).json()  # 기본 녹이기 설정
     mp4 = tmp / "o.mp4"
     mp4.write_bytes(c.get(out["url"]).content)
     pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(mp4), "-ac", "1", "-f", "f32le", "-"],
@@ -93,3 +94,50 @@ def test_video_without_audio_and_bad_ids(client):
     assert c.get("/api/videos/../../etc/passwd").status_code in (400, 404)
     assert c.get("/api/videos/zzz/info").status_code == 400
     assert c.get("/api/exports/..%2Fsecret").status_code == 404
+
+
+def _decode(c, url, tmp, name):
+    p = tmp / name
+    p.write_bytes(c.get(url).content if isinstance(url, str) else url)
+    pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(p), "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(pcm, np.float32)
+
+
+def test_blend_ducks_original_levels_voice_and_adds_room(client):
+    c, tmp = client
+    video = make_video(tmp / "v.mp4", seconds=4)
+    v = c.post("/api/videos", files={"file": ("v.mp4", video.read_bytes(), "video/mp4")}).json()
+    t = c.post("/api/takes", files={"file": ("t.wav", make_take(tmp / "t.wav", 1.0).read_bytes(), "audio/wav")}).json()
+    clips = [{"take_id": t["id"], "src_in": 0, "src_out": 1.0, "start": 1.0, "gain": 0.2}]  # 일부러 작게
+    rms = lambda a, s, e: float(np.sqrt(np.mean(a[int(s * SR):int(e * SR)] ** 2)))
+    body = lambda blend, ov=1.0: {"video_id": v["id"], "clips": clips, "original_volume": ov, "blend": blend}
+    off = {"room": 0, "duck": 0, "gate": False, "tone": False, "level": False}
+
+    # 덕킹: 목소리 없는 3초대 원본은 그대로, 목소리 구간에서는 원본이 줄어듦 (원본만 비교하려고 sine 대역만 봄)
+    plain = c.post("/api/mix", json=body(off)).content
+    ducked = c.post("/api/mix", json=body({**off, "duck": 1.0})).content
+    a0, a1 = _decode(c, plain, tmp, "p.wav"), _decode(c, ducked, tmp, "d.wav")
+    assert rms(a1, 3.2, 3.9) == pytest.approx(rms(a0, 3.2, 3.9), rel=0.05)
+    assert rms(a1, 1.2, 1.8) < rms(a0, 1.2, 1.8) * 0.9
+
+    # 레벨 맞춤: 작게 녹음한 목소리도 -20dBFS 근처로 (원본 소리 없이)
+    leveled = _decode(c, c.post("/api/mix", json=body({**off, "level": True}, ov=0)).content, tmp, "l.wav")
+    lv = 20 * np.log10(rms(leveled, 1.05, 1.95))
+    assert -24 < lv < -16
+
+    # 공간감: 목소리가 끝난 뒤 잔향이 남음
+    dry = _decode(c, c.post("/api/mix", json=body({**off, "level": True}, ov=0)).content, tmp, "dr.wav")
+    wet = _decode(c, c.post("/api/mix", json=body({**off, "level": True, "room": 1.0}, ov=0)).content, tmp, "w.wav")
+    assert rms(wet, 2.02, 2.3) > rms(dry, 2.02, 2.3) * 3
+
+
+def test_mix_is_cached_and_matches_export_length(client):
+    c, tmp = client
+    video = make_video(tmp / "v.mp4", seconds=2)
+    v = c.post("/api/videos", files={"file": ("v.mp4", video.read_bytes(), "video/mp4")}).json()
+    body = {"video_id": v["id"], "clips": [], "original_volume": 1}
+    a = c.post("/api/mix", json=body)
+    b = c.post("/api/mix", json=body)
+    assert a.content == b.content
+    assert abs(len(_decode(c, a.content, tmp, "m.wav")) - 2 * SR) < SR * 0.05

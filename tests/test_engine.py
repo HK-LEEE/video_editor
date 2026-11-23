@@ -84,3 +84,12 @@ def test_presets_survive_max_intensity():
     for name, s in load_presets().items():
         y = process(x, s, trim=False, intensity=3.0)
         assert np.isfinite(y).all() and np.sqrt(np.mean(y ** 2)) > 0.005, name
+
+
+def test_peak_limit_never_boosts_and_caps_peaks():
+    from voxshift.engine import peak_limit
+    t = np.arange(SR) / SR
+    quiet = (0.1 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    assert np.max(np.abs(peak_limit(quiet))) == pytest.approx(0.1, rel=0.01)
+    loud = (1.5 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    assert np.max(np.abs(peak_limit(loud))) <= 10 ** (-1 / 20) + 1e-6
