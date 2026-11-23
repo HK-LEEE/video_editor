@@ -1,0 +1,7 @@
+numpy>=1.26
+pyworld>=0.3.4
+setuptools<81  # pyworld가 pkg_resources를 씁니다
+pedalboard>=0.9
+soundfile>=0.12
+pyyaml>=6
+gradio>=4.40

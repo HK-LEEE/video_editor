@@ -1,0 +1,60 @@
+# 프리셋 정의. 값은 들어보며 자유롭게 조정하세요.
+# pitch: 반음 단위 (+12 = 한 옥타브 위)
+# formant: 포먼트 비율 (1.0 = 그대로, >1 = 작은 성도/밝게, <1 = 큰 성도/굵게)
+# monotone_hz: 지정하면 억양을 없애고 이 높이(Hz)로 고정 (로봇용)
+# effects: 순서대로 적용되는 효과 목록
+
+deep:
+  label: 저음 (굵은 목소리)
+  pitch: -4
+  formant: 0.88
+  effects:
+    - {type: low_shelf, cutoff_hz: 200, gain_db: 4}
+
+bright:
+  label: 고음 (밝은 목소리)
+  pitch: 4
+  formant: 1.10
+
+male_to_female:
+  label: 남 → 여
+  pitch: 6
+  formant: 1.18
+  effects:
+    - {type: high_shelf, cutoff_hz: 4000, gain_db: 3}
+
+female_to_male:
+  label: 여 → 남
+  pitch: -6
+  formant: 0.85
+
+child:
+  label: 아이
+  pitch: 8
+  formant: 1.25
+
+robot:
+  label: 로봇
+  pitch: 0
+  formant: 1.0
+  monotone_hz: 110
+  effects:
+    - {type: ring_mod, freq_hz: 50, mix: 0.6}
+    - {type: bitcrush, bit_depth: 10}
+
+monster:
+  label: 괴물
+  pitch: -10
+  formant: 0.75
+  effects:
+    - {type: distortion, drive_db: 15}
+    - {type: reverb, room_size: 0.5, wet_level: 0.25}
+
+telephone:
+  label: 전화기
+  pitch: 0
+  formant: 1.0
+  effects:
+    - {type: highpass, cutoff_hz: 300}
+    - {type: lowpass, cutoff_hz: 3400}
+    - {type: distortion, drive_db: 6}

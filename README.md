@@ -1,0 +1,63 @@
+# voxshift
+
+내 목소리를 녹음해서 바로 변조하는 보이스 체인저입니다. 학습이나 GPU 없이 맥에서 돌아갑니다.
+
+WORLD 보코더(pyworld)로 목소리를 피치와 포먼트(음색)로 나눠 따로 움직이고, pedalboard 효과를 얹습니다.
+피치만 바꾸는 일반 피치시프트보다 덜 "다람쥐"처럼 들립니다.
+
+## 설치 (맥)
+
+```bash
+brew install ffmpeg
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## 웹 화면
+
+```bash
+python app.py
+```
+
+브라우저에서 http://127.0.0.1:7860 을 열고
+
+1. 마이크 버튼으로 녹음하거나 m4a/wav 파일을 올립니다 (처음엔 브라우저가 마이크 권한을 물어봅니다)
+2. 목소리를 고르고 **변조하기**를 누르면 결과를 바로 듣고 내려받을 수 있습니다
+3. **모든 프리셋 한 번에 비교**를 열면 8가지 결과를 나란히 들어볼 수 있습니다
+4. **직접 조절**을 고르면 피치·포먼트 슬라이더를 마음대로 움직일 수 있습니다
+
+## 명령줄
+
+```bash
+python -m voxshift --list                       # 프리셋 목록
+python -m voxshift 녹음.m4a --preset deep        # 프리셋 하나
+python -m voxshift 녹음.m4a --preset all         # 전부 만들어 output/에 저장
+python -m voxshift 녹음.m4a --pitch 5 --formant 1.15
+```
+
+## 프리셋
+
+| 이름 | 목소리 | 피치(반음) | 포먼트 | 효과 |
+| --- | --- | --- | --- | --- |
+| deep | 저음 | -4 | 0.88 | 저역 강조 |
+| bright | 고음 | +4 | 1.10 | |
+| male_to_female | 남 → 여 | +6 | 1.18 | 고역 강조 |
+| female_to_male | 여 → 남 | -6 | 0.85 | |
+| child | 아이 | +8 | 1.25 | |
+| robot | 로봇 | 110Hz 고정 | 1.0 | 링 모듈레이션, 비트크러시 |
+| monster | 괴물 | -10 | 0.75 | 디스토션, 리버브 |
+| telephone | 전화기 | 0 | 1.0 | 300~3400Hz 대역 제한 |
+
+값은 `voxshift/presets.yaml`에서 고치거나 새 프리셋을 추가하면 됩니다.
+
+## 녹음 팁
+
+조용한 방에서 노트북 마이크와 30~50cm 거리를 두고, 에어컨과 선풍기는 끄세요. 잡음이 적을수록 결과가 깨끗합니다.
+
+## 테스트
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
