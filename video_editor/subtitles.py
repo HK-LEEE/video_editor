@@ -12,6 +12,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# ASS의 글자 크기는 '줄 높이' 기준이라 같은 숫자여도 CSS보다 글자가 작게 나옵니다. 한글·영문 글꼴에서 미리보기와
+# 비슷해지게 키워 주는 값 (글꼴마다 몇 % 다를 수 있어요).
+ASS_SIZE_FACTOR = 1.25
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -87,9 +90,10 @@ def _ass_text(text: str) -> str:
 def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang: str = "",
            length: float | None = None) -> str:
     """화면 크기(width×height)에 맞춘 ASS 자막. 배경 상자가 있으면 글자 아래에 상자를 한 겹 더 깝니다."""
-    size = max(8, round(style.size * height))
-    outline = round(style.outline * size, 1)
-    box_pad = round(size * 0.25, 1)
+    px = max(8.0, style.size * height)              # 미리보기(CSS)의 글자 크기와 같은 기준
+    size = round(px * ASS_SIZE_FACTOR)
+    outline = round(style.outline * px, 1)
+    box_pad = round(px * 0.25, 1)
     margin_h = round((1 - style.max_width) / 2 * width)
     bold = -1 if style.bold else 0
     font = style.font.replace(",", " ") or "sans-serif"

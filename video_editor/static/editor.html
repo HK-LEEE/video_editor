@@ -8,7 +8,7 @@
   :root {
     --bg: #1b1b1e; --panel: #232327; --panel2: #2b2b30; --ink: #ececef; --muted: #9a9aa3; --line: #3a3a41;
     --accent: #f08c3a; --sel: #ffd166; --rec: #ef4444;
-    --vclip: #6d5bd0; --aclip: #2f9e74; --voiceclip: #d9822b; --ruler: #2b2b30;
+    --vclip: #6d5bd0; --aclip: #2f9e74; --voiceclip: #d9822b; --ruler: #2b2b30; --subclip: #2f7fc2;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -49,15 +49,27 @@
   .item small { color: var(--muted); display: block; }
 
   #monitor { display: flex; flex-direction: column; align-items: stretch; padding: 10px; gap: 8px; background: #111; }
-  #stage { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 6px; overflow: hidden; }
-  #stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; }
-  #stage video.show { visibility: visible; }
+  #stage { position: relative; flex: 1; min-height: 0; background: #050505; border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
+  #frame { position: relative; background: #000; overflow: hidden; width: 100%; aspect-ratio: 16 / 9; }
+  #frame video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; }
+  #frame video.show { visibility: visible; }
+  #frame video.pip { cursor: move; }
+  #dip { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+  #subs { position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
+  #subs .cue { position: absolute; transform: translate(-50%, -50%); width: max-content; text-align: center; white-space: pre-wrap; line-height: 1.25; paint-order: stroke fill; }
   #transport { display: flex; align-items: center; gap: 8px; justify-content: center; }
   #time { font-variant-numeric: tabular-nums; font-size: 15px; min-width: 190px; text-align: center; }
 
   .field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
   .field > span { color: var(--muted); font-size: 12px; }
   .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  h2.sub { margin-top: 14px; }
+  textarea { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px; font: inherit; color: inherit; resize: vertical; }
+  input[type=color] { width: 38px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+  .cuelist { max-height: 160px; overflow: auto; margin-bottom: 8px; }
+  .cuelist div { padding: 3px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cuelist div:hover, .cuelist div.sel { background: var(--panel2); }
+  .cuelist small { color: var(--muted); margin-right: 6px; }
   .check { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
   #result a { color: var(--accent); }
   #result video { width: 100%; margin-top: 6px; border-radius: 6px; }
@@ -68,6 +80,7 @@
   #heads { position: sticky; left: 0; z-index: 2; width: 200px; flex: none; background: var(--panel); border-right: 1px solid var(--line); }
   .head { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .head.sel { background: var(--panel2); }
+  .head.subhead { background: #1d2430; }
   .head .tn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   .head .tn small { font-weight: 400; color: var(--muted); }
   .head button { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
@@ -89,6 +102,7 @@
   <span class="sep"></span>
   <button id="addV">+ 영상 트랙</button>
   <button id="addA">+ 오디오 트랙</button>
+  <button id="addSub" title="T: 재생 위치에 자막 넣기">+ 자막</button>
   <span class="sep"></span>
   <button id="exportBtn" class="primary">내보내기 (mp4)</button>
   <span id="status"></span>
@@ -104,7 +118,7 @@
     <p class="muted" style="margin-top:10px">항목을 타임라인 트랙으로 끌어 놓으세요. 두 번 누르면 재생 위치에 들어갑니다.</p>
   </aside>
   <section id="monitor">
-    <div id="stage"></div>
+    <div id="stage"><div id="frame"><div id="dip"></div><div id="subs"></div></div></div>
     <div id="transport">
       <button id="homeBtn" title="Home">⏮</button>
       <button id="playBtn" title="Space">▶</button>
@@ -121,7 +135,7 @@
   <label class="check"><input type="checkbox" id="snapChk" checked> 자석 (클립 끝에 붙이기)</label>
   <span class="muted" style="margin-left:auto">
     <kbd>Space</kbd> 재생 · <kbd>←</kbd><kbd>→</kbd> 0.1초 · <kbd>,</kbd><kbd>.</kbd> 프레임 · <kbd>[</kbd><kbd>]</kbd> 경계 ·
-    <kbd>⌥</kbd>+<kbd>←</kbd><kbd>→</kbd> 클립 이동 · <kbd>S</kbd> 자르기 · <kbd>R</kbd> 녹음 · <kbd>⌘Z</kbd> 취소 · <kbd>⌥</kbd>+끌기: 연결 무시
+    <kbd>⌥</kbd>+<kbd>←</kbd><kbd>→</kbd> 클립 이동 · <kbd>S</kbd> 자르기 · <kbd>T</kbd> 자막 · <kbd>R</kbd> 녹음 · <kbd>⌘Z</kbd> 취소 · <kbd>⌥</kbd>+끌기: 연결 무시
   </span>
 </div>
 <div id="timeline"><div id="tlInner"><div id="heads"></div><canvas id="tl"></canvas></div></div>
@@ -130,8 +144,8 @@
 (() => {
 'use strict';
 const $ = (id) => document.getElementById(id);
-const canvas = $('tl'), tlBox = $('timeline'), stage = $('stage');
-const RULER = 26, ROW = { video: 54, audio: 62 }, EDGE = 7, FRAME = 1 / 30, STORE = 'video_editor.v1';
+const canvas = $('tl'), tlBox = $('timeline'), stage = $('stage'), frameEl = $('frame'), dipEl = $('dip'), subsEl = $('subs');
+const RULER = 26, ROW = { video: 54, audio: 62 }, SUBH = 44, EDGE = 7, FRAME = 1 / 30, STORE = 'video_editor.v1';
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`; };
@@ -140,25 +154,36 @@ const status = (msg, err) => { $('status').textContent = msg || ''; $('status').
 // ================================================================ 상태
 const newTrack = (kind, o = {}) => ({ id: uid(), kind, name: '', mute: false, solo: false, volume: 1, voice: false,
   room: 0, level: false, gate: false, tone: false, duck: 0, ...o });
+const SUB_DEFAULTS = { font: 'Apple SD Gothic Neo', size: 0.06, bold: true, color: '#ffffff', outline_color: '#000000', outline: 0.1,
+  bg_color: '#000000', bg_opacity: 0, x: 0.5, y: 0.85, max_width: 0.9 };
+const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true };
+// 예전에 저장된 프로젝트나 새로 만든 클립에 빠진 항목을 채웁니다
+function normalize(p) {
+  p.subtitles ||= []; p.subtitle_lang ||= '';
+  p.subtitle_style = { ...SUB_DEFAULTS, ...(p.subtitle_style || {}) };
+  for (const c of p.clips) for (const [k, v] of Object.entries(CLIP_DEFAULTS)) if (c[k] === undefined) c[k] = v;
+  return p;
+}
 function defaultProject() {
   const voice = newTrack('audio', { name: '보이스', voice: true, room: 0.25, level: true, gate: true, tone: true });
   return {
     tracks: [newTrack('video', { name: 'V1' }), newTrack('audio', { name: '원본 소리', duck: 0.3 }), voice,
              newTrack('audio', { name: '음악·효과음', duck: 0.5 })],
-    clips: [],
+    clips: [], subtitles: [], subtitle_style: { ...SUB_DEFAULTS }, subtitle_lang: '',
   };
 }
 let project = defaultProject();
 let ui = { zoom: 60, latency: 0, monitor: false, snap: true, armed: null };
 let media = {};                 // id -> meta (서버 보관함)
-let sel = { clip: null, track: null };
+let sel = { clip: null, track: null, cue: null, subs: false };
 try {
   const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
-  if (saved && saved.project) { project = saved.project; ui = { ...ui, ...saved.ui }; }
+  if (saved && saved.project) { project = normalize(saved.project); ui = { ...ui, ...saved.ui }; }
 } catch {}
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {} };
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
+const cueById = (id) => project.subtitles.find((c) => c.id === id);
 const len = (c) => c.src_out - c.src_in;
 const end = (c) => c.start + len(c);
 const projectLength = () => Math.max(0, ...project.clips.map(end));
@@ -177,15 +202,16 @@ function commit() {
 }
 function edit(fn) { begin(); fn(); commit(); }
 function restore(json) {
-  project = JSON.parse(json);
+  project = normalize(JSON.parse(json));
   if (sel.clip && !clipById(sel.clip)) sel.clip = null;
+  if (sel.cue && !cueById(sel.cue)) sel.cue = null;
   if (sel.track && !project.tracks.find((t) => t.id === sel.track)) sel.track = null;
   afterChange();
 }
 function doUndo() { if (!undo.length) return; redo.push(snap()); restore(undo.pop()); }
 function doRedo() { if (!redo.length) return; undo.push(snap()); restore(redo.pop()); }
 function afterChange() {
-  save(); renderHeads(); renderInspector(); layout(); refreshMix();
+  normalize(project); save(); renderHeads(); renderInspector(); layout(); refreshMix();
   $('undoBtn').disabled = !undo.length; $('redoBtn').disabled = !redo.length;
 }
 
@@ -301,10 +327,13 @@ let ac = null;
 const actx = () => (ac ||= new (window.AudioContext || window.webkitAudioContext)());
 let T = 0, playing = null, recording = null;
 const playhead = () => (playing ? playing.t0 + (actx().currentTime - playing.c0) : T);
-const projectBody = () => ({ tracks: project.tracks, clips: project.clips });
+const projectBody = () => ({ tracks: project.tracks, clips: project.clips, subtitles: project.subtitles,
+  subtitle_style: project.subtitle_style, subtitle_lang: project.subtitle_lang });
+// 소리 믹스에는 자막·전환·PiP가 영향이 없으니 빼서, 그걸 바꿔도 미리듣기를 다시 만들지 않게 합니다
+const mixBody = () => ({ tracks: project.tracks, clips: project.clips.map((c) => { const o = { ...c }; for (const k in CLIP_DEFAULTS) delete o[k]; return o; }) });
 const mixes = new Map();
 function ensureMix() {
-  const key = JSON.stringify(projectBody());
+  const key = JSON.stringify(mixBody());
   if (!mixes.has(key)) {
     if (mixes.size > 8) mixes.delete(mixes.keys().next().value);
     const e = { buffer: null };
@@ -358,40 +387,148 @@ function refreshMix() {
 }
 
 // ================================================================ 모니터 (보이는 영상 클립을 시간에 맞춰 표시)
+// 서버 내보내기와 같은 규칙: 아래 트랙부터 쌓고, PiP는 맨 위, 전환 효과는 새 클립이 시작하는 처음 몇 초 동안만 적용됩니다.
 const videoEls = new Map();
-function videoEl(mid) {
-  if (!videoEls.has(mid)) {
+function videoEl(key, mid) {
+  if (!videoEls.has(key)) {
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = `/api/media/${mid}/file`;
-    stage.appendChild(v); videoEls.set(mid, v);
+    frameEl.insertBefore(v, dipEl); videoEls.set(key, v);
   }
-  return videoEls.get(mid);
+  return videoEls.get(key);
 }
-function topVideoClip(t) {
-  const vt = project.tracks.filter((k) => k.kind === 'video');
-  for (let i = vt.length - 1; i >= 0; i--) {
-    if (vt[i].mute) continue;
-    const cs = project.clips.filter((k) => k.track === vt[i].id && k.start <= t && t < end(k));
-    const c = cs.sort((x, y) => y.start - x.start)[0];   // 같은 트랙에서 겹치면 나중에 시작한 클립이 위
-    if (c && media[c.media] && media[c.media].has_video) return c;
+function videoLayers() {   // 아래 → 위 순서
+  const rank = {};
+  project.tracks.filter((t) => t.kind === 'video' && !t.mute).forEach((t, i) => (rank[t.id] = i));
+  return project.clips.filter((c) => c.track in rank && len(c) > 0 && media[c.media] && media[c.media].has_video)
+    .sort((a, b) => (a.layout === 'pip') - (b.layout === 'pip') || rank[a.track] - rank[b.track] || a.start - b.start);
+}
+// 바로 이어 붙은 다음 클립이 전환 효과를 가지면 이 클립 끝을 그만큼 늘려 겹칩니다 (서버와 같은 규칙)
+function tailExt(c, layers) {
+  if (c.layout === 'pip') return 0;
+  return Math.max(0, ...layers.filter((k) => k.track === c.track && k.layout !== 'pip' && k.transition !== 'none' && Math.abs(k.start - end(c)) <= 0.05)
+    .map((k) => Math.min(k.transition_dur, len(k))));
+}
+function trState(c, t) {
+  if (c.transition === 'none') return null;
+  const d = Math.min(c.transition_dur, len(c)), p = (t - c.start) / d;
+  return p >= 1 ? null : { kind: c.layout === 'pip' ? 'fade' : c.transition, p: clamp(p, 0, 1) };
+}
+function canvasAspect() {
+  for (const want of ['full', 'pip']) for (const t of project.tracks) {
+    if (t.kind !== 'video') continue;
+    for (const c of project.clips) {
+      const m = media[c.media];
+      if (c.track === t.id && c.layout === want && m && m.width && m.height) return m.width / m.height;
+    }
   }
-  return null;
+  return 16 / 9;
+}
+function sizeFrame() {
+  const ar = canvasAspect(), W = stage.clientWidth, H = stage.clientHeight;
+  let w = W, h = W / ar;
+  if (h > H) { h = H; w = H * ar; }
+  w = Math.max(40, Math.floor(w)); h = Math.max(40, Math.floor(h));
+  if (frameEl.style.width !== w + 'px' || frameEl.style.height !== h + 'px') { frameEl.style.width = w + 'px'; frameEl.style.height = h + 'px'; frameEl.style.aspectRatio = 'auto'; }
+}
+let pipHits = [];
+function syncVideo(v, c, t) {
+  const dur = (media[c.media] || {}).duration || c.src_out;
+  const want = Math.min(c.src_in + (t - c.start), Math.max(0, dur - 0.04));
+  if (playing) {
+    if (v.paused) { v.currentTime = want; v.play().catch(() => {}); }
+    else if (Math.abs(v.currentTime - want) > 0.25) v.currentTime = want;
+  } else {
+    if (!v.paused) v.pause();
+    if (!v.seeking && Math.abs(v.currentTime - want) > FRAME / 2) v.currentTime = want;
+  }
+}
+function pipRect(c, fw, fh) {   // 프레임 안에서 PiP 화면의 위치·크기 (px)
+  const m = media[c.media] || {}, ar = m.width && m.height ? m.width / m.height : 16 / 9;
+  const w = c.pip_w * fw, h = w / ar;
+  return { w, h, x: clamp(c.pip_x * fw - w / 2, 0, Math.max(0, fw - w)), y: clamp(c.pip_y * fh - h / 2, 0, Math.max(0, fh - h)) };
 }
 function updateMonitor(t) {
-  const c = topVideoClip(t);
-  const target = c ? videoEl(c.media) : null;
-  for (const v of videoEls.values()) if (v !== target) { v.classList.remove('show'); if (!v.paused) v.pause(); }
-  if (!target) return;
-  target.classList.add('show');
-  const want = c.src_in + (t - c.start);
-  if (playing) {
-    if (target.paused) { target.currentTime = want; target.play().catch(() => {}); }
-    else if (Math.abs(target.currentTime - want) > 0.25) target.currentTime = want;
-  } else {
-    if (!target.paused) target.pause();
-    if (!target.seeking && Math.abs(target.currentTime - want) > FRAME / 2) target.currentTime = want;
+  sizeFrame();
+  const fw = frameEl.clientWidth, fh = frameEl.clientHeight;
+  const layers = videoLayers();
+  const act = layers.filter((c) => t >= c.start - 1e-6 && t < end(c) + tailExt(c, layers));
+  const fulls = act.filter((c) => c.layout !== 'pip'), pips = act.filter((c) => c.layout === 'pip');
+  const shown = [];
+  for (let i = fulls.length - 1; i >= 0; i--) {   // 위에서부터: 전환 중이면 그 아래 화면도 함께 보입니다
+    const st = trState(fulls[i], t);
+    shown.unshift({ c: fulls[i], st });
+    if (!st || st.p >= 1) break;
+  }
+  const used = new Map(), keep = new Set();
+  const place = (c, css, z) => {
+    const n = used.get(c.media) || 0; used.set(c.media, n + 1);
+    const v = videoEl(`${c.media}|${n}`, c.media); keep.add(v);
+    syncVideo(v, c, t);
+    v.className = 'show' + (c.layout === 'pip' ? ' pip' : '');
+    Object.assign(v.style, { opacity: '1', clipPath: 'none', transform: 'none', left: '0', top: '0', width: '100%', height: '100%',
+      outline: 'none', outlineOffset: '0', zIndex: z, ...css });
+  };
+  let dip = 0;
+  shown.forEach(({ c, st }, i) => {
+    const css = {}, z = String(10 * (i + 1));
+    if (st) {
+      const p = st.p;
+      if (st.kind === 'fade') css.opacity = String(p);
+      else if (st.kind === 'dip') { css.opacity = String(p < 0.5 ? 0 : (p - 0.5) * 2); dip = p < 0.5 ? p * 2 : 1; dipEl.style.zIndex = String(10 * (i + 1) - 5); }
+      else if (st.kind === 'wipeleft') css.clipPath = `inset(0 0 0 ${(1 - p) * 100}%)`;
+      else if (st.kind === 'wiperight') css.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      else if (st.kind === 'slideleft') css.transform = `translateX(${(1 - p) * 100}%)`;
+      else if (st.kind === 'slideright') css.transform = `translateX(${-(1 - p) * 100}%)`;
+    }
+    place(c, css, z);
+  });
+  dipEl.style.opacity = String(dip);
+  pipHits = [];
+  pips.forEach((c, i) => {
+    const r = pipRect(c, fw, fh), st = trState(c, t), bw = Math.max(2, Math.round(fw / 240));
+    place(c, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px', opacity: String(c.pip_opacity * (st ? st.p : 1)),
+      ...(c.pip_border ? { outline: `${bw}px solid #fff`, outlineOffset: `-${bw}px` } : {}), ...(sel.clip === c.id && !c.pip_border ? { outline: '1px dashed #ffd166' } : {}) }, String(500 + i));
+    pipHits.push({ c, ...r });
+  });
+  for (const v of videoEls.values()) if (!keep.has(v)) { v.className = ''; if (!v.paused) v.pause(); }
+  updateSubs(t, fh);
+}
+let subsKey = '';
+function updateSubs(t, fh) {
+  const lang = project.subtitle_lang, st = project.subtitle_style;
+  const cues = project.subtitles.filter((c) => c.text.trim() && t >= c.start && t < c.end && (!lang || !c.lang || c.lang === lang));
+  const key = JSON.stringify([cues.map((c) => [c.id, c.text]), st, fh]);
+  if (key === subsKey) return;
+  subsKey = key; subsEl.innerHTML = '';
+  const px = st.size * fh;
+  for (const c of cues) {
+    const d = document.createElement('div'); d.className = 'cue'; d.textContent = c.text.trim();
+    const bg = st.bg_opacity > 0 ? hexAlpha(st.bg_color, st.bg_opacity) : 'transparent';
+    Object.assign(d.style, { left: st.x * 100 + '%', top: st.y * 100 + '%', maxWidth: st.max_width * 100 + '%', fontFamily: `"${st.font}", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`,
+      fontSize: px + 'px', fontWeight: st.bold ? '700' : '400', color: st.color, background: bg, padding: st.bg_opacity > 0 ? `${px * 0.25}px` : '0',
+      webkitTextStroke: st.outline > 0 ? `${2 * st.outline * px}px ${st.outline_color}` : '0' });
+    subsEl.appendChild(d);
   }
 }
+const hexAlpha = (h, a) => `rgba(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)},${a})`;
+// 미리보기에서 PiP 화면을 끌어 옮기기
+let pipDrag = null;
+frameEl.addEventListener('pointerdown', (e) => {
+  const b = frameEl.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const hit = [...pipHits].reverse().find((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+  if (!hit) return;
+  frameEl.setPointerCapture(e.pointerId);
+  sel.clip = hit.c.id; sel.track = null; sel.cue = null; sel.subs = false; renderHeads(); renderInspector();
+  begin(); pipDrag = { c: hit.c, x0: e.clientX, y0: e.clientY, ox: hit.c.pip_x, oy: hit.c.pip_y, fw: b.width, fh: b.height };
+});
+frameEl.addEventListener('pointermove', (e) => {
+  if (!pipDrag) return;
+  const d = pipDrag;
+  d.c.pip_x = clamp(d.ox + (e.clientX - d.x0) / d.fw, 0, 1); d.c.pip_y = clamp(d.oy + (e.clientY - d.y0) / d.fh, 0, 1);
+  for (const [id, k] of [['iPipX', 'pip_x'], ['iPipY', 'pip_y']]) if ($(id)) $(id).value = d.c[k];
+});
+frameEl.addEventListener('pointerup', () => { if (pipDrag) { pipDrag = null; commit(); } });
 
 // ================================================================ 녹음
 let stream = null;
@@ -431,6 +568,7 @@ let lastVoice = { voice: 'original', intensity: 1 };
 
 // ================================================================ 편집 동작
 function splitAt(t) {
+  if (sel.cue) return splitCue(t);
   let targets = sel.clip ? [clipById(sel.clip)].filter((c) => c && c.start + 0.02 < t && t < end(c) - 0.02) : [];
   if (!targets.length) targets = project.clips.filter((c) => c.start + 0.02 < t && t < end(c) - 0.02);
   else targets = [...targets, ...linked(targets[0]).filter((c) => c.start + 0.02 < t && t < end(c) - 0.02)];
@@ -448,6 +586,7 @@ function splitAt(t) {
   });
 }
 function deleteSelected(withLinks = true) {
+  if (sel.cue) return deleteCue();
   const c = clipById(sel.clip); if (!c) return;
   const gone = new Set([c.id, ...(withLinks ? linked(c).map((k) => k.id) : [])]);
   edit(() => { project.clips = project.clips.filter((k) => !gone.has(k.id)); sel.clip = null; });
@@ -477,17 +616,43 @@ function removeTrack(id) {
   });
 }
 
+// ---- 자막 트랙
+function addCue(t = playhead(), text = '새 자막') {
+  const next = project.subtitles.filter((c) => c.start > t + 0.05).map((c) => c.start).sort((a, b) => a - b)[0];
+  const cue = { id: uid(), start: Math.max(0, t), end: Math.max(0, t) + Math.min(2, next !== undefined ? Math.max(0.3, next - t) : 2), text, lang: '', source: 'manual' };
+  edit(() => { project.subtitles.push(cue); sel.cue = cue.id; sel.clip = null; sel.track = null; sel.subs = false; });
+  const ta = $('cText'); if (ta) { ta.focus(); ta.select(); }
+}
+function splitCue(t) {
+  const c = cueById(sel.cue);
+  if (!c || !(c.start + 0.1 < t && t < c.end - 0.1)) { status('재생 위치가 자막 안에 있어야 자를 수 있어요.', true); return; }
+  const right = { ...c, id: uid(), start: t };
+  edit(() => { c.end = t; project.subtitles.push(right); sel.cue = right.id; });
+}
+function deleteCue() {
+  edit(() => { project.subtitles = project.subtitles.filter((c) => c.id !== sel.cue); sel.cue = null; });
+}
+async function exportSrt() {
+  if (!project.subtitles.some((c) => c.text.trim())) { status('내보낼 자막이 없어요.', true); return; }
+  const r = await fetch('/api/subtitles/srt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(projectBody()) });
+  if (!r.ok) { status('SRT 내보내기 실패', true); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'subtitles.srt'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000); status('SRT 파일을 저장했어요.');
+}
+const subTop = () => RULER;   // 자막 트랙은 눈금 바로 아래(맨 위)에 둡니다
+const tracksEnd = () => { const rs = rows(); return rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h : RULER + SUBH; };
+
 // ================================================================ 트랙 머리
 function rows() {   // 화면 위→아래: 영상 트랙은 위 트랙이 먼저(V2, V1), 그다음 오디오
   const v = project.tracks.filter((t) => t.kind === 'video').reverse();
   const a = project.tracks.filter((t) => t.kind === 'audio');
-  let y = RULER;
+  let y = RULER + SUBH;
   return [...v, ...a].map((t) => { const r = { track: t, y, h: ROW[t.kind] }; y += r.h; return r; });
 }
 function renderHeads() {
   const box = $('heads'); box.innerHTML = '';
   const rs = rows(), armed = armedTrack();
-  box.style.height = (rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h : RULER) + 'px';
+  box.style.height = tracksEnd() + 'px';
   const top = document.createElement('div');
   top.className = 'head'; top.style.top = '0'; top.style.height = RULER + 'px'; top.style.cursor = 'default';
   top.innerHTML = '<span class="muted">트랙</span>'; box.appendChild(top);
@@ -512,9 +677,17 @@ function renderHeads() {
       vol.onchange = () => commit();
       el.appendChild(vol);
     }
-    el.onclick = () => { sel.track = t.id; sel.clip = null; renderHeads(); renderInspector(); };
+    el.onclick = () => { sel.track = t.id; sel.clip = null; sel.cue = null; sel.subs = false; renderHeads(); renderInspector(); };
     box.appendChild(el);
   }
+  const sh = document.createElement('div');
+  sh.className = 'head subhead' + (sel.subs ? ' sel' : ''); sh.style.top = subTop() + 'px'; sh.style.height = SUBH + 'px';
+  sh.innerHTML = `<span class="tn">자막 <small>${project.subtitles.length}개</small></span>`;
+  const add = document.createElement('button'); add.textContent = '＋'; add.title = '재생 위치에 자막 넣기 (T)';
+  add.onclick = (e) => { e.stopPropagation(); addCue(); };
+  sh.appendChild(add);
+  sh.onclick = () => { sel.subs = true; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); };
+  box.appendChild(sh);
 }
 
 // ================================================================ 속성 패널
@@ -566,9 +739,121 @@ function aiOptions(c) {  // 보관함의 소리/녹음 파일을 '샘플 목소�
   return `<optgroup label="AI 변환 · 샘플 목소리로 바꾸기">${cur}${refs.map((m) => `<option value="ai:${m.id}" ${'ai:' + m.id === c.voice ? 'selected' : ''}>AI · ${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('')}</optgroup>`;
 }
 function field(label, html) { return `<label class="field"><span>${label}</span>${html}</label>`; }
+// ---- 영상 클립: 전환 효과 · PiP
+const TRANSITIONS = [['none', '없음'], ['fade', '페이드 (부드럽게 섞기)'], ['dip', '검정을 거쳐서'], ['wipeleft', '와이프 ← (오른쪽에서 쓸어 넣기)'],
+  ['wiperight', '와이프 → (왼쪽에서 쓸어 넣기)'], ['slideleft', '밀기 ← (오른쪽에서 들어옴)'], ['slideright', '밀기 → (왼쪽에서 들어옴)']];
+const pct = (v) => Math.round(v * 100) + '%';
+function pipHeightFrac(c) {   // 화면 높이에 대한 PiP 화면 높이 비율
+  const m = media[c.media] || {}, ar = m.width && m.height ? m.width / m.height : 16 / 9;
+  return c.pip_w * canvasAspect() / ar;
+}
+function videoClipHtml(c) {
+  const pip = c.layout === 'pip';
+  return `<h2 class="sub">전환 효과</h2>
+    ${field('이 클립이 시작될 때', `<select id="iTr">${TRANSITIONS.map(([k, l]) => `<option value="${k}" ${k === c.transition ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+    ${c.transition !== 'none' ? field(`길이 <b id="iTrDV">${(+c.transition_dur).toFixed(1)}초</b>`, `<input type="range" id="iTrD" min="0.1" max="3" step="0.1" value="${c.transition_dur}">`)
+      + `<p class="muted">${pip ? 'PiP 화면은 페이드로 나타나요. ' : ''}앞 클립에 바로 이어 붙이면 앞 클립 끝이 자동으로 겹쳐서 두 화면이 섞여요. 첫 클립은 검은 화면에서 나타나요.</p>` : ''}
+    <h2 class="sub">화면 배치</h2>
+    ${field('배치', `<select id="iLayout"><option value="full" ${pip ? '' : 'selected'}>전체 화면</option><option value="pip" ${pip ? 'selected' : ''}>작은 화면 (PiP)</option></select>`)}
+    ${pip ? `${field(`크기 <b id="iPipWV">${pct(c.pip_w)}</b>`, `<input type="range" id="iPipW" min="0.1" max="1" step="0.01" value="${c.pip_w}">`)}
+      <div class="field"><span>위치 (미리보기에서 끌어도 돼요)</span><div class="row">
+        <button data-corner="tl">↖</button><button data-corner="tr">↗</button><button data-corner="c">⊕</button><button data-corner="bl">↙</button><button data-corner="br">↘</button></div></div>
+      ${field('가로', `<input type="range" id="iPipX" min="0" max="1" step="0.005" value="${c.pip_x}">`)}
+      ${field('세로', `<input type="range" id="iPipY" min="0" max="1" step="0.005" value="${c.pip_y}">`)}
+      ${field(`불투명도 <b id="iPipOV">${pct(c.pip_opacity)}</b>`, `<input type="range" id="iPipO" min="0.1" max="1" step="0.05" value="${c.pip_opacity}">`)}
+      <label class="check"><input type="checkbox" id="iPipB" ${c.pip_border ? 'checked' : ''}> 흰 테두리</label>
+      <p class="muted">PiP는 위 트랙/아래 트랙과 상관없이 항상 큰 화면 위에 올라가요.</p>` : ''}`;
+}
+function bindVideoClip(c) {
+  $('iTr').onchange = (e) => edit(() => (c.transition = e.target.value));
+  const slide = (id, key, lbl) => { const el = $(id); if (!el) return; el.oninput = (e) => { begin(); c[key] = +e.target.value; if (lbl) $(lbl[0]).textContent = lbl[1](c[key]); }; el.onchange = () => commit(); };
+  slide('iTrD', 'transition_dur', ['iTrDV', (v) => v.toFixed(1) + '초']);
+  slide('iPipW', 'pip_w', ['iPipWV', pct]); slide('iPipX', 'pip_x'); slide('iPipY', 'pip_y'); slide('iPipO', 'pip_opacity', ['iPipOV', pct]);
+  $('iLayout').onchange = (e) => edit(() => (c.layout = e.target.value));
+  if ($('iPipB')) $('iPipB').onchange = (e) => edit(() => (c.pip_border = e.target.checked));
+  document.querySelectorAll('[data-corner]').forEach((b) => (b.onclick = () => edit(() => {
+    const k = b.dataset.corner, mx = c.pip_w / 2 + 0.03, my = pipHeightFrac(c) / 2 + 0.04;
+    c.pip_x = k.includes('l') ? mx : k.includes('r') ? 1 - mx : 0.5;
+    c.pip_y = k.includes('t') ? my : k.includes('b') ? 1 - my : 0.5;
+  })));
+}
+
+// ---- 자막 속성
+const FONTS = ['Apple SD Gothic Neo', 'AppleMyungjo', 'Noto Sans KR', 'Nanum Gothic', 'Arial', 'Helvetica Neue', 'Arial Black', 'Impact'];
+const SUB_PRESETS = {
+  '기본': { color: '#ffffff', outline_color: '#000000', outline: 0.1, bg_opacity: 0, bold: true, size: 0.06 },
+  '예능': { color: '#ffe14d', outline_color: '#000000', outline: 0.16, bg_opacity: 0, bold: true, size: 0.09 },
+  '박스': { color: '#ffffff', outline_color: '#000000', outline: 0, bg_color: '#000000', bg_opacity: 0.6, bold: true, size: 0.055 },
+};
+function subStyleHtml() {
+  const s = project.subtitle_style;
+  const fonts = FONTS.includes(s.font) ? FONTS : [s.font, ...FONTS];
+  const col = (id, v) => `<input type="color" id="${id}" value="${v}">`;
+  return `<h2 class="sub">자막 스타일 <span class="muted" style="text-transform:none">(모든 자막)</span></h2>
+    <div class="row" style="margin-bottom:8px">${Object.keys(SUB_PRESETS).map((k) => `<button data-preset="${k}">${k}</button>`).join('')}</div>
+    ${field('글꼴', `<select id="sFont">${fonts.map((f) => `<option ${f === s.font ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('')}</select>`)}
+    ${field(`크기 <b id="sSizeV">${(s.size * 100).toFixed(1)}%</b>`, `<input type="range" id="sSize" min="0.02" max="0.2" step="0.005" value="${s.size}">`)}
+    <label class="check"><input type="checkbox" id="sBold" ${s.bold ? 'checked' : ''}> 굵게</label>
+    <div class="row" style="margin:6px 0 10px"><span class="muted">글자</span>${col('sColor', s.color)}<span class="muted">외곽선</span>${col('sOutC', s.outline_color)}<span class="muted">배경</span>${col('sBgC', s.bg_color)}</div>
+    ${field(`외곽선 굵기 <b id="sOutV">${pct(s.outline)}</b>`, `<input type="range" id="sOut" min="0" max="0.3" step="0.01" value="${s.outline}">`)}
+    ${field(`배경 불투명도 <b id="sBgV">${s.bg_opacity ? pct(s.bg_opacity) : '없음'}</b>`, `<input type="range" id="sBg" min="0" max="1" step="0.05" value="${s.bg_opacity}">`)}
+    <div class="field"><span>세로 위치</span><div class="row"><button data-y="0.12">위</button><button data-y="0.5">가운데</button><button data-y="0.85">아래</button></div></div>
+    ${field('', `<input type="range" id="sY" min="0.05" max="0.95" step="0.005" value="${s.y}">`)}
+    <p class="muted">글자 크기는 화면 높이 기준이라 세로 영상에도 같은 비율로 입혀져요. 쇼츠·릴스 안전 영역 안내는 나중에 추가해요.</p>`;
+}
+function bindSubStyle() {
+  const s = project.subtitle_style;
+  const bind = (id, key, kind, lbl) => {
+    const el = $(id); if (!el) return;
+    if (kind === 'check') { el.onchange = (e) => edit(() => (s[key] = e.target.checked)); return; }
+    if (kind === 'select') { el.onchange = (e) => edit(() => (s[key] = e.target.value)); return; }
+    el.oninput = (e) => { begin(); s[key] = kind === 'color' ? e.target.value : +e.target.value; if (lbl) $(lbl[0]).textContent = lbl[1](s[key]); };
+    el.onchange = () => commit();
+  };
+  bind('sFont', 'font', 'select'); bind('sBold', 'bold', 'check');
+  bind('sSize', 'size', 'range', ['sSizeV', (v) => (v * 100).toFixed(1) + '%']);
+  bind('sColor', 'color', 'color'); bind('sOutC', 'outline_color', 'color'); bind('sBgC', 'bg_color', 'color');
+  bind('sOut', 'outline', 'range', ['sOutV', pct]); bind('sBg', 'bg_opacity', 'range', ['sBgV', (v) => (v ? pct(v) : '없음')]);
+  bind('sY', 'y', 'range');
+  document.querySelectorAll('[data-preset]').forEach((b) => (b.onclick = () => edit(() => Object.assign(s, SUB_PRESETS[b.dataset.preset]))));
+  document.querySelectorAll('[data-y]').forEach((b) => (b.onclick = () => edit(() => (s.y = +b.dataset.y))));
+}
+function renderSubInspector(box, cue, result) {
+  const cues = [...project.subtitles].sort((a, b) => a.start - b.start);
+  box.innerHTML = `<h2>자막</h2>
+    ${cue ? `${field('내용', `<textarea id="cText" rows="3" placeholder="자막 내용 (줄바꿈 가능)">${escapeHtml(cue.text)}</textarea>`)}
+      <div class="row" style="margin-bottom:10px"><span class="muted">시작</span><input type="number" id="cStart" step="0.05" min="0" value="${cue.start.toFixed(2)}">
+        <span class="muted">끝</span><input type="number" id="cEnd" step="0.05" min="0" value="${cue.end.toFixed(2)}"></div>
+      <div class="row" style="margin-bottom:10px"><span class="muted">언어</span><input type="text" id="cLang" style="width:60px" placeholder="ko" value="${escapeHtml(cue.lang)}">
+        <span class="muted">${{ manual: '직접 입력', ai: 'AI 받아쓰기', translation: '번역' }[cue.source] || ''}</span></div>
+      <div class="row"><button id="cSplit">✂ 재생 위치에서 자르기</button><button id="cDel">🗑 지우기</button></div>`
+    : `<div class="cuelist">${cues.length ? cues.map((c) => `<div data-cue="${c.id}"><small>${fmt(c.start)}</small>${escapeHtml(c.text.replace(/\n/g, ' ')) || '(빈 자막)'}</div>`).join('') : '<p class="muted">아직 자막이 없어요.</p>'}</div>
+      <div class="row"><button id="cAdd" class="primary">＋ 재생 위치에 자막</button></div>`}
+    <div class="row" style="margin-top:8px"><button id="cSrt">SRT 파일로 내보내기</button></div>
+    ${subStyleHtml()}${result}`;
+  if (cue) {
+    const ta = $('cText');
+    ta.oninput = () => { begin(); cue.text = ta.value; };
+    ta.onchange = () => commit();
+    const num = (id, key) => ($(id).onchange = (e) => {
+      const v = Math.max(0, +e.target.value || 0);
+      edit(() => { if (key === 'start') cue.start = Math.min(v, cue.end - 0.1); else cue.end = Math.max(v, cue.start + 0.1); });
+    });
+    num('cStart', 'start'); num('cEnd', 'end');
+    $('cLang').onchange = (e) => edit(() => (cue.lang = e.target.value.trim()));
+    $('cSplit').onclick = () => splitCue(playhead());
+    $('cDel').onclick = deleteCue;
+  } else {
+    $('cAdd').onclick = () => addCue();
+    box.querySelectorAll('[data-cue]').forEach((d) => (d.onclick = () => { sel.cue = d.dataset.cue; sel.subs = false; seek(cueById(sel.cue).start); renderHeads(); renderInspector(); }));
+  }
+  $('cSrt').onclick = exportSrt;
+  bindSubStyle();
+}
 function renderInspector() {
   const box = $('inspector'), c = clipById(sel.clip), t = !c && project.tracks.find((k) => k.id === sel.track);
   const result = $('result') ? $('result').outerHTML : '<div id="result"></div>';
+  if (!c && !t && (sel.cue || sel.subs)) { renderSubInspector(box, sel.cue && cueById(sel.cue), result); return; }
   if (c) {
     const tr = trackOf(c), m = media[c.media] || { name: '?' }, isAudio = tr.kind === 'audio';
     box.innerHTML = `<h2>클립</h2><p><b>${escapeHtml(m.name)}</b><br><span class="muted">${escapeHtml(tr.name)} · ${fmt(c.start)} – ${fmt(end(c))} (${len(c).toFixed(2)}초)${c.link ? ' · 🔗 연결됨' : ''}</span></p>
@@ -576,8 +861,8 @@ function renderInspector() {
         + '<div id="aiBox"></div>'
         + (c.voice.startsWith('ai:') ? '' : field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`))
         + field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
-        : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>'}
-      <div class="row"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link ? '<button id="iUnlink">연결 해제</button>' : ''}</div>
+        : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>' + videoClipHtml(c)}
+      <div class="row" style="margin-top:10px"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link ? '<button id="iUnlink">연결 해제</button>' : ''}</div>
       ${result}`;
     if (isAudio && c.voice.startsWith('ai:')) aiCheck(c);
     if (isAudio) {
@@ -587,6 +872,7 @@ function renderInspector() {
       $('iGain').oninput = (e) => { begin(); c.gain = +e.target.value; $('iGainV').textContent = Math.round(c.gain * 100) + '%'; };
       $('iGain').onchange = () => commit();
     }
+    if (!isAudio) bindVideoClip(c);
     $('iSplit').onclick = () => splitAt(playhead());
     $('iDel').onclick = () => deleteSelected();
     if (c.link) $('iUnlink').onclick = () => edit(() => [c, ...linked(c)].forEach((k) => (k.link = null)));
@@ -627,7 +913,7 @@ function confirmTwice(btn, msg) {
 // ================================================================ 타임라인 그리기
 const pps = () => ui.zoom;
 function layout() {
-  const rs = rows(), H = (rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h : RULER) + 30;
+  const H = tracksEnd() + 30;
   const W = Math.max(tlBox.clientWidth - 202, Math.ceil((projectLength() + 30) * pps()));
   const dpr = window.devicePixelRatio || 1;
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
@@ -648,6 +934,9 @@ function draw() {
     g.fillRect(0, r.y, W, r.h);
     g.fillStyle = col('--line'); g.fillRect(0, r.y + r.h - 1, W, 1);
   }
+  const sr = { y: subTop(), h: SUBH };
+  g.fillStyle = '#1b2230'; g.fillRect(0, sr.y, W, sr.h);
+  g.fillStyle = col('--line'); g.fillRect(0, sr.y + sr.h - 1, W, 1);
   // 눈금
   g.fillStyle = col('--ruler'); g.fillRect(0, 0, W, RULER);
   const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120].find((x) => x * s >= 70) || 300;
@@ -681,7 +970,11 @@ function draw() {
     g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
     g.fillStyle = '#fff'; g.font = '11px sans-serif';
     const m = media[c.media];
-    const label = `${c.link ? '🔗 ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
+    if (tr.kind === 'video' && c.transition && c.transition !== 'none') {   // 전환 효과가 걸린 구간
+      const tw = Math.min(c.transition_dur, len(c)) * s;
+      g.fillStyle = '#ffffff55'; g.beginPath(); g.moveTo(x, y + h); g.lineTo(x + tw, y); g.lineTo(x + tw, y + h); g.closePath(); g.fill();
+    }
+    const label = `${tr.kind === 'video' && c.layout === 'pip' ? '▣ PiP · ' : ''}${tr.kind === 'video' && c.transition && c.transition !== 'none' ? '⇄ ' : ''}${c.link ? '🔗 ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
     g.fillText(label, x + 5, y + 13);
     g.restore();
     if (c.id === sel.clip || selLinks.has(c.id)) {
@@ -689,6 +982,15 @@ function draw() {
       roundRect(g, x + 1, y + 1, w - 2, h - 2, 4); g.stroke(); g.lineWidth = 1;
     }
     g.globalAlpha = 1;
+  }
+  // 자막
+  for (const q of project.subtitles) {
+    const x = q.start * s, w = Math.max(3, (q.end - q.start) * s), y = sr.y + 4, h = sr.h - 9;
+    g.fillStyle = col('--subclip') + 'cc'; roundRect(g, x, y, w, h, 4); g.fill();
+    g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+    g.fillStyle = '#fff'; g.font = '11px sans-serif'; g.fillText(q.text.replace(/\n/g, ' ') || '(빈 자막)', x + 5, y + 16);
+    g.restore();
+    if (q.id === sel.cue) { g.strokeStyle = col('--sel'); g.lineWidth = 2; roundRect(g, x + 1, y + 1, w - 2, h - 2, 4); g.stroke(); g.lineWidth = 1; }
   }
   // 녹음 중
   if (recording) {
@@ -734,8 +1036,30 @@ function snapTime(t, xs) {
   return best === null ? [t, null] : [best, best];
 }
 let drag = null;
+const inSubRow = (y) => y >= subTop() && y < subTop() + SUBH;
+function cueHit(x) {
+  const s = pps();
+  for (let i = project.subtitles.length - 1; i >= 0; i--) {
+    const q = project.subtitles[i], x0 = q.start * s, x1 = q.end * s;
+    if (x >= x0 - 2 && x <= x1 + 2) return { q, mode: x - x0 <= EDGE ? 'left' : x1 - x <= EDGE ? 'right' : 'move' };
+  }
+  return null;
+}
+canvas.addEventListener('dblclick', (e) => { const [x, y] = pos(e); if (inSubRow(y) && cueHit(x)) { const ta = $('cText'); if (ta) { ta.focus(); ta.select(); } } });
 canvas.addEventListener('pointerdown', (e) => {
-  const [x, y] = pos(e), h = hit(x, y);
+  const [x, y] = pos(e);
+  if (inSubRow(y)) {   // 자막 트랙
+    canvas.setPointerCapture(e.pointerId);
+    const q = cueHit(x);
+    sel.clip = null; sel.track = null;
+    if (!q) { sel.cue = null; sel.subs = true; seek(x / pps()); drag = { mode: 'scrub' }; renderHeads(); renderInspector(); return; }
+    sel.cue = q.q.id; sel.subs = false;
+    const t0 = playhead(); if (!playing && !(t0 >= q.q.start && t0 < q.q.end)) seek(q.q.start);
+    begin(); drag = { mode: q.mode, cue: q.q, x0: x, orig: { ...q.q }, moved: false };
+    renderHeads(); renderInspector(); return;
+  }
+  sel.cue = null; sel.subs = false;
+  const h = hit(x, y);
   canvas.setPointerCapture(e.pointerId);
   if (!h || !h.c) {
     sel.clip = null; if (h) sel.track = h.row.track.id;
@@ -749,8 +1073,29 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   const [x, y] = pos(e);
-  if (!drag) { const h = hit(x, y); canvas.style.cursor = h && h.c ? (h.mode === 'move' ? 'grab' : 'ew-resize') : 'default'; return; }
+  if (!drag) {
+    const h = inSubRow(y) ? cueHit(x) : hit(x, y);
+    const hc = h && (h.c || h.q); canvas.style.cursor = hc ? (h.mode === 'move' ? 'grab' : 'ew-resize') : 'default'; return;
+  }
   if (drag.mode === 'scrub') { seek(x / pps()); return; }
+  if (drag.cue) {
+    const q = drag.cue, o = drag.orig, dt = (x - drag.x0) / pps();
+    const xs = [...snapTargets(new Set()), ...project.subtitles.filter((k) => k !== q).flatMap((k) => [k.start, k.end])];
+    drag.moved = true; snapLine = null;
+    if (drag.mode === 'move') {
+      let ns = Math.max(0, o.start + dt), len0 = o.end - o.start;
+      const [a, la] = snapTime(ns, xs), [b, lb] = snapTime(ns + len0, xs);
+      if (la !== null) { ns = a; snapLine = la; } else if (lb !== null) { ns = Math.max(0, b - len0); snapLine = lb; }
+      q.start = ns; q.end = ns + len0;
+    } else if (drag.mode === 'left') {
+      const [a, la] = snapTime(Math.max(0, o.start + dt), xs); if (la !== null) snapLine = la;
+      q.start = Math.min(a, o.end - 0.1);
+    } else {
+      const [a, la] = snapTime(o.end + dt, xs); if (la !== null) snapLine = la;
+      q.end = Math.max(a, o.start + 0.1);
+    }
+    return;
+  }
   const s = pps(), dt = (x - drag.x0) / s, ex = new Set(drag.group.map((k) => k.id));
   const xs = snapTargets(ex);
   drag.moved = true; snapLine = null;
@@ -807,14 +1152,14 @@ $('recBtn').onclick = toggleRecord;
 $('splitBtn').onclick = () => splitAt(playhead());
 $('delBtn').onclick = () => deleteSelected();
 $('undoBtn').onclick = doUndo; $('redoBtn').onclick = doRedo;
-$('addV').onclick = () => addTrack('video'); $('addA').onclick = () => addTrack('audio');
+$('addV').onclick = () => addTrack('video'); $('addA').onclick = () => addTrack('audio'); $('addSub').onclick = () => addCue();
 $('zoom').oninput = (e) => { ui.zoom = +e.target.value; save(); layout(); };
 $('latency').onchange = (e) => { ui.latency = +e.target.value || 0; save(); };
 $('monitorChk').onchange = (e) => { ui.monitor = e.target.checked; save(); };
 $('snapChk').onchange = (e) => { ui.snap = e.target.checked; save(); };
 document.addEventListener('pointerup', () => { const a = document.activeElement; if (a && (a.type === 'range' || a.type === 'checkbox')) a.blur(); });
 function edges() {
-  return [...new Set([0, projectLength(), ...project.clips.flatMap((c) => [c.start, end(c)])].map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
+  return [...new Set([0, projectLength(), ...project.clips.flatMap((c) => [c.start, end(c)]), ...project.subtitles.flatMap((c) => [c.start, c.end])].map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
 }
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input[type=text], input[type=number], select, textarea')) return;
@@ -840,8 +1185,9 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); }
   else if (k === 'r' || k === 'R') toggleRecord();
   else if (k === 's' || k === 'S') splitAt(playhead());
+  else if (k === 't' || k === 'T') addCue();
   else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); deleteSelected(!e.altKey); }
-  else if (k === 'Escape') { sel.clip = null; sel.track = null; renderHeads(); renderInspector(); }
+  else if (k === 'Escape') { sel.clip = null; sel.track = null; sel.cue = null; sel.subs = false; renderHeads(); renderInspector(); }
 });
 
 // ================================================================ 내보내기
@@ -853,7 +1199,7 @@ $('exportBtn').onclick = async () => {
     if (!r.ok) throw new Error((await r.json()).detail || '내보내기 실패');
     const out = await r.json();
     status('완성!');
-    sel = { clip: null, track: null }; renderHeads(); renderInspector();
+    sel = { clip: null, track: null, cue: null, subs: false }; renderHeads(); renderInspector();
     $('result').innerHTML = `<h2 style="margin-top:14px">내보낸 영상</h2><a href="${out.url}" download>⬇ ${out.file} 내려받기</a><video controls src="${out.url}"></video>`;
   } catch (err) { status(String(err.message || err), true); }
   finally { $('exportBtn').disabled = false; }
@@ -876,7 +1222,7 @@ $('zoom').value = ui.zoom; $('latency').value = ui.latency; $('monitorChk').chec
 afterChange();
 loadMedia().then(loadPeaksFor);
 // 테스트·디버깅용
-window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek };
+window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; } };
 })();
 </script>
 </body>
