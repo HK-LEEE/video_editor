@@ -64,3 +64,23 @@ def test_roundtrip_m4a(tmp_path):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(wav), str(m4a)], check=True)
     y = load_audio(m4a)
     assert abs(y.size - SR * 1.5) < SR * 0.1
+
+
+def test_intensity_doubles_pitch_change():
+    x = voice_like(150)
+    y = process(x, VoiceSettings(pitch=3), trim=False, intensity=2.0)
+    assert median_f0(y) == pytest.approx(150 * 2 ** (6 / 12), rel=0.05)
+
+
+def test_whisper_has_no_pitch():
+    x = voice_like(150)
+    y = process(x, VoiceSettings(whisper=True), trim=False)
+    f0, _ = pyworld.dio(y.astype(np.float64), SR, frame_period=5.0)
+    assert np.mean(f0 > 0) < 0.3
+
+
+def test_presets_survive_max_intensity():
+    x = voice_like()
+    for name, s in load_presets().items():
+        y = process(x, s, trim=False, intensity=3.0)
+        assert np.isfinite(y).all() and np.sqrt(np.mean(y ** 2)) > 0.005, name

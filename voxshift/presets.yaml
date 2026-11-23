@@ -6,32 +6,32 @@
 
 deep:
   label: 저음 (굵은 목소리)
-  pitch: -4
-  formant: 0.88
+  pitch: -5
+  formant: 0.85
   effects:
     - {type: low_shelf, cutoff_hz: 200, gain_db: 4}
 
 bright:
   label: 고음 (밝은 목소리)
-  pitch: 4
-  formant: 1.10
+  pitch: 5
+  formant: 1.12
 
 male_to_female:
   label: 남 → 여
-  pitch: 6
-  formant: 1.18
+  pitch: 7
+  formant: 1.2
   effects:
     - {type: high_shelf, cutoff_hz: 4000, gain_db: 3}
 
 female_to_male:
   label: 여 → 남
-  pitch: -6
-  formant: 0.85
+  pitch: -7
+  formant: 0.83
 
 child:
   label: 아이
-  pitch: 8
-  formant: 1.25
+  pitch: 9
+  formant: 1.28
 
 robot:
   label: 로봇
@@ -58,3 +58,60 @@ telephone:
     - {type: highpass, cutoff_hz: 300}
     - {type: lowpass, cutoff_hz: 3400}
     - {type: distortion, drive_db: 6}
+
+# ---- 원본 목소리가 덜 드러나는 강한 프리셋 ----
+
+chipmunk:
+  label: 다람쥐
+  pitch: 12
+  formant: 1.45
+
+giant:
+  label: 거인
+  pitch: -12
+  formant: 0.65
+  effects:
+    - {type: low_shelf, cutoff_hz: 150, gain_db: 6}
+    - {type: reverb, room_size: 0.8, wet_level: 0.3}
+
+demon:
+  label: 악마
+  pitch: -14
+  formant: 0.7
+  effects:
+    - {type: ring_mod, freq_hz: 30, mix: 0.35}
+    - {type: distortion, drive_db: 22}
+    - {type: reverb, room_size: 0.7, wet_level: 0.35}
+
+alien:
+  label: 외계인
+  pitch: 5
+  formant: 1.5
+  effects:
+    - {type: ring_mod, freq_hz: 400, mix: 0.4}
+    - {type: phaser, rate_hz: 2.0, depth: 0.9, mix: 0.7}
+
+whisper:
+  label: 속삭임
+  pitch: 0
+  formant: 1.05
+  whisper: true
+  effects:
+    - {type: highpass, cutoff_hz: 400}
+
+android:
+  label: 안드로이드
+  pitch: 0
+  formant: 1.15
+  monotone_hz: 180
+  effects:
+    - {type: chorus, rate_hz: 0.5, depth: 0.3, mix: 0.6}
+    - {type: bitcrush, bit_depth: 8}
+
+cave:
+  label: 동굴 메아리
+  pitch: -2
+  formant: 0.95
+  effects:
+    - {type: delay, delay_s: 0.3, feedback: 0.45, mix: 0.35}
+    - {type: reverb, room_size: 0.95, wet_level: 0.45}

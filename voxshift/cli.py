@@ -14,6 +14,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--preset", help="프리셋 이름, 또는 all (모든 프리셋)")
     p.add_argument("--pitch", type=float, help="피치 (반음)")
     p.add_argument("--formant", type=float, help="포먼트 비율")
+    p.add_argument("--intensity", type=float, default=1.0, help="프리셋 강도 (1.0 기본, 2.0 두 배)")
     p.add_argument("--out", default="output", help="저장 폴더")
     p.add_argument("--list", action="store_true", help="프리셋 목록 보기")
     args = p.parse_args(argv)
@@ -41,7 +42,7 @@ def main(argv: list[str] | None = None) -> None:
     audio = load_audio(args.input)
     stem = Path(args.input).stem
     for s in targets:
-        path = save_wav(Path(args.out) / f"{stem}_{s.name}.wav", process(audio, s))
+        path = save_wav(Path(args.out) / f"{stem}_{s.name}.wav", process(audio, s, intensity=args.intensity))
         print(f"저장: {path}")
 
 

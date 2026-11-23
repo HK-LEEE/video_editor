@@ -21,22 +21,23 @@ def _settings(preset: str, pitch: float, formant: float) -> VoiceSettings:
     return PRESETS[preset]
 
 
-def _run(path: str, s: VoiceSettings) -> str:
+def _run(path: str, s: VoiceSettings, intensity: float = 1.0) -> str:
     audio = load_audio(path)
     out = OUT_DIR / f"{Path(path).stem}_{s.name}_{int(time.time() * 1000)}.wav"
-    return str(save_wav(out, process(audio, s)))
+    return str(save_wav(out, process(audio, s, intensity=intensity)))
 
 
-def convert(path, preset, pitch, formant):
+def convert(path, preset, pitch, formant, intensity):
     if not path:
         raise gr.Error("먼저 녹음하거나 파일을 올려 주세요.")
-    return _run(path, _settings(preset, pitch, formant))
+    # 직접 조절은 슬라이더 값 그대로, 프리셋은 강도를 곱합니다
+    return _run(path, _settings(preset, pitch, formant), 1.0 if preset == CUSTOM else intensity)
 
 
-def convert_all(path):
+def convert_all(path, intensity):
     if not path:
         raise gr.Error("먼저 녹음하거나 파일을 올려 주세요.")
-    return [_run(path, s) for s in PRESETS.values()]
+    return [_run(path, s, intensity) for s in PRESETS.values()]
 
 
 def on_preset(preset):
@@ -52,9 +53,11 @@ with gr.Blocks(title="voxshift 보이스 체인저") as demo:
         with gr.Column():
             inp = gr.Audio(sources=["microphone", "upload"], type="filepath", label="내 목소리")
             preset = gr.Radio(CHOICES, value="deep", label="목소리")
-            pitch = gr.Slider(-12, 12, value=PRESETS["deep"].pitch, step=0.5,
+            intensity = gr.Slider(0.5, 3.0, value=1.0, step=0.1,
+                                  label="강도 (프리셋 변조 세기, 1.0 = 기본, 2.0 = 두 배)")
+            pitch = gr.Slider(-24, 24, value=PRESETS["deep"].pitch, step=0.5,
                               label="피치 (반음)", interactive=False)
-            formant = gr.Slider(0.7, 1.4, value=PRESETS["deep"].formant, step=0.01,
+            formant = gr.Slider(0.5, 2.0, value=PRESETS["deep"].formant, step=0.01,
                                 label="포먼트 (1.0 = 그대로, 크면 밝고 작으면 굵게)", interactive=False)
             btn = gr.Button("변조하기", variant="primary")
         with gr.Column():
@@ -65,8 +68,8 @@ with gr.Blocks(title="voxshift 보이스 체인저") as demo:
         all_outs = [gr.Audio(type="filepath", label=s.label, interactive=False) for s in PRESETS.values()]
 
     preset.change(on_preset, preset, [pitch, formant])
-    btn.click(convert, [inp, preset, pitch, formant], out)
-    all_btn.click(convert_all, inp, all_outs)
+    btn.click(convert, [inp, preset, pitch, formant, intensity], out)
+    all_btn.click(convert_all, [inp, intensity], all_outs)
 
 
 if __name__ == "__main__":

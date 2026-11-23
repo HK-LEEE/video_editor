@@ -6,7 +6,7 @@ WORLD 보코더(pyworld)로 목소리를 피치(F0), 스펙트럼 포락선(포�
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +24,15 @@ class VoiceSettings:
     pitch: float = 0.0          # 반음
     formant: float = 1.0        # 포먼트 비율
     monotone_hz: float | None = None
+    whisper: bool = False       # 성대 울림을 없애 속삭이는 소리로
     effects: list[dict] = field(default_factory=list)
+
+    def scaled(self, intensity: float) -> "VoiceSettings":
+        """강도를 곱한 복사본. 1.0 = 그대로, 2.0 = 피치·포먼트 변화가 두 배."""
+        if intensity == 1.0:
+            return self
+        return replace(self, pitch=self.pitch * intensity,
+                       formant=float(self.formant ** intensity))
 
     @classmethod
     def from_dict(cls, cfg: dict, name: str = "custom") -> "VoiceSettings":
@@ -34,6 +42,7 @@ class VoiceSettings:
             pitch=float(cfg.get("pitch", 0.0)),
             formant=float(cfg.get("formant", 1.0)),
             monotone_hz=cfg.get("monotone_hz"),
+            whisper=bool(cfg.get("whisper", False)),
             effects=list(cfg.get("effects") or []),
         )
 
@@ -103,8 +112,8 @@ def _warp_envelope(env: np.ndarray, ratio: float) -> np.ndarray:
 
 
 def shift_voice(audio: np.ndarray, sr: int, pitch: float = 0.0, formant: float = 1.0,
-                monotone_hz: float | None = None) -> np.ndarray:
-    if pitch == 0 and formant == 1.0 and monotone_hz is None:
+                monotone_hz: float | None = None, whisper: bool = False) -> np.ndarray:
+    if pitch == 0 and formant == 1.0 and monotone_hz is None and not whisper:
         return audio
     x = audio.astype(np.float64)
     f0, t = pyworld.dio(x, sr, frame_period=5.0)
@@ -116,6 +125,9 @@ def shift_voice(audio: np.ndarray, sr: int, pitch: float = 0.0, formant: float =
     if monotone_hz is not None:
         f0 = np.where(voiced, float(monotone_hz), 0.0)
     f0 = f0 * (2.0 ** (pitch / 12.0))
+    if whisper:
+        f0 = np.zeros_like(f0)        # 모든 프레임을 무성음(숨소리)으로 합성
+        ap = np.ones_like(ap)
 
     sp = _warp_envelope(sp, formant)
     ap = _warp_envelope(ap, formant)
@@ -148,6 +160,10 @@ def _make_plugin(fx: dict):
         return pb.Bitcrush(bit_depth=fx.get("bit_depth", 10))
     if kind == "reverb":
         return pb.Reverb(room_size=fx.get("room_size", 0.5), wet_level=fx.get("wet_level", 0.3))
+    if kind == "delay":
+        return pb.Delay(delay_seconds=fx.get("delay_s", 0.25), feedback=fx.get("feedback", 0.4), mix=fx.get("mix", 0.3))
+    if kind == "phaser":
+        return pb.Phaser(rate_hz=fx.get("rate_hz", 1.0), depth=fx.get("depth", 0.8), mix=fx.get("mix", 0.6))
     if kind == "chorus":
         return pb.Chorus(rate_hz=fx.get("rate_hz", 1.0), depth=fx.get("depth", 0.25), mix=fx.get("mix", 0.5))
     raise ValueError(f"알 수 없는 효과: {kind}")
@@ -165,13 +181,14 @@ def apply_effects(audio: np.ndarray, sr: int, effects: list[dict]) -> np.ndarray
 # ---------------------------------------------------------------- 전체 파이프라인
 
 def process(audio: np.ndarray, settings: VoiceSettings, sr: int = SAMPLE_RATE,
-            trim: bool = True) -> np.ndarray:
+            trim: bool = True, intensity: float = 1.0) -> np.ndarray:
     """전처리 → 피치·포먼트 → 효과 → 음량 맞추기 → 리미터."""
+    settings = settings.scaled(intensity)
     if trim:
         audio = trim_silence(audio, sr)
     in_rms = _rms(audio)
 
-    y = shift_voice(audio, sr, settings.pitch, settings.formant, settings.monotone_hz)
+    y = shift_voice(audio, sr, settings.pitch, settings.formant, settings.monotone_hz, settings.whisper)
     y = apply_effects(y, sr, settings.effects)
 
     y = y * (in_rms / _rms(y))  # 원본과 비슷한 크기로
