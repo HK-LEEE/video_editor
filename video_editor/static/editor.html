@@ -88,6 +88,18 @@
   .head button.recarm.lit { background: var(--rec); border-color: var(--rec); color: #fff; }
   .head input[type=range] { width: 54px; }
   #tl { display: block; }
+  dialog#aiDlg { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; width: min(620px, 94vw); max-height: 88vh; }
+  dialog#aiDlg::backdrop { background: rgba(0,0,0,.6); }
+  #aiDlg .aihead { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+  #aiDlg .aihead .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #aiDlg section { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+  #aiDlg h3 { margin: 0 0 2px; font-size: 14px; }
+  #aiDlg p { margin: 2px 0 8px; }
+  #aiDlg .aimsg { min-height: 1em; }
+  #aiDlg .aimsg.err { color: var(--rec); }
+  #aiDlg.busy { cursor: progress; }
+  #aiDlg code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; user-select: all; }
+  #aiDlg [hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -103,6 +115,7 @@
   <button id="addV">+ 영상 트랙</button>
   <button id="addA">+ 오디오 트랙</button>
   <button id="addSub" title="T: 재생 위치에 자막 넣기">+ 자막</button>
+  <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙">🤖 AI 도구</button>
   <span class="sep"></span>
   <button id="exportBtn" class="primary">내보내기 (mp4)</button>
   <span id="status"></span>
@@ -140,6 +153,50 @@
 </div>
 <div id="timeline"><div id="tlInner"><div id="heads"></div><canvas id="tl"></canvas></div></div>
 
+<dialog id="aiDlg">
+  <div class="aihead"><b>🤖 AI 도구</b><span class="muted" id="aiTarget"></span><button id="aiClose">닫기</button></div>
+  <p id="aiSetup" class="muted"></p>
+  <section>
+    <h3>1. 자동 자막</h3><p class="muted">말을 받아 적어 자막 트랙에 넣어요 (faster-whisper, 한국어 지원).</p>
+    <div class="row"><span class="muted">말하는 언어</span><select id="aiSubLang"></select><button id="aiS1" class="primary">자막 만들기</button></div>
+    <p class="aimsg"></p>
+  </section>
+  <section>
+    <h3>2. 무음·군말(어, 음) 자르기</h3><p class="muted">조용한 구간과 군말을 찾아 잘라내고 빈틈을 붙여요. 먼저 분석해서 결과를 보여 드려요.</p>
+    <label class="check"><input type="checkbox" id="aiCutSil" checked> 무음 구간</label>
+    <label class="check"><input type="checkbox" id="aiCutFil"> 군말 (받아쓰기가 필요해서 오래 걸려요)</label>
+    <div class="row"><span class="muted">이보다 긴 무음만 <b id="aiCutMinV">0.5초</b></span><input type="range" id="aiCutMin" min="0.2" max="2" step="0.1" value="0.5">
+      <span class="muted">군말 언어</span><select id="aiCutLang"></select></div>
+    <div class="row" style="margin-top:6px"><button id="aiS2" class="primary">분석하기</button><button id="aiS2b" hidden>✂ 잘라내고 붙이기</button></div>
+    <p class="aimsg"></p>
+  </section>
+  <section>
+    <h3>3. 장면 전환에서 자동 나누기</h3><p class="muted">화면이 확 바뀌는 곳마다 영상 클립을 잘라요.</p>
+    <div class="row"><span class="muted">민감도(낮을수록 많이) <b id="aiSceneThV">0.30</b></span><input type="range" id="aiSceneTh" min="0.1" max="0.6" step="0.05" value="0.3"></div>
+    <div class="row" style="margin-top:6px"><button id="aiS3" class="primary">장면 찾기</button><button id="aiS3b" hidden>✂ 이 곳들에서 나누기</button></div>
+    <p class="aimsg"></p>
+  </section>
+  <section>
+    <h3>4. 노이즈 제거</h3><p class="muted">녹음의 배경 잡음을 AI(RNNoise)로 줄여요. 고른 클립의 소리가 깨끗한 파일로 바뀌어요.</p>
+    <div class="row"><button id="aiS4" class="primary">노이즈 제거</button></div>
+    <p class="aimsg"></p>
+  </section>
+  <section>
+    <h3>5. 대본 읽기 (TTS)</h3><p class="muted">글을 음성으로 읽어 재생 위치에 넣어요. 만든 뒤 보이스 변조·AI 변환도 쓸 수 있어요. <span id="aiTtsNote"></span></p>
+    <textarea id="aiTtsText" rows="3" placeholder="읽을 글"></textarea>
+    <div class="row" style="margin-top:6px"><select id="aiTtsLang"></select><span class="muted">속도 <b id="aiTtsRateV">×1.0</b></span><input type="range" id="aiTtsRate" min="0.6" max="1.6" step="0.1" value="1"><button id="aiS5" class="primary">읽어서 넣기</button></div>
+    <p class="aimsg"></p>
+  </section>
+  <section>
+    <h3>6. 번역 더빙</h3><p class="muted">자막을 다른 언어로 번역하고, 그 언어로 읽은 음성을 자막 시각에 맞춰 넣어요. 번역 자막은 같은 자막 트랙에 들어가요.</p>
+    <div class="row"><select id="aiDubSrc"></select><span>→</span><select id="aiDubDst"></select><span class="muted">속도 <b id="aiDubRateV">×1.0</b></span><input type="range" id="aiDubRate" min="0.6" max="1.6" step="0.1" value="1"></div>
+    <label class="check"><input type="checkbox" id="aiDubVoice" checked> 더빙 음성도 만들기 (끄면 번역 자막만)</label>
+    <div class="row"><button id="aiS6" class="primary">번역하고 더빙하기</button></div>
+    <p class="aimsg"></p>
+  </section>
+</dialog>
+
+
 <script>
 (() => {
 'use strict';
@@ -152,6 +209,7 @@ const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = 
 const status = (msg, err) => { $('status').textContent = msg || ''; $('status').className = err ? 'err' : ''; };
 
 // ================================================================ 상태
+const AI_LANGS = { ko: '한국어', en: 'English', ja: '日本語', zh: '中文', es: 'Español', fr: 'Français', de: 'Deutsch' };
 const newTrack = (kind, o = {}) => ({ id: uid(), kind, name: '', mute: false, solo: false, volume: 1, voice: false,
   room: 0, level: false, gate: false, tone: false, duck: 0, vol_keys: [], ...o });
 const SUB_DEFAULTS = { font: 'Apple SD Gothic Neo', size: 0.06, bold: true, color: '#ffffff', outline_color: '#000000', outline: 0.1,
@@ -630,22 +688,25 @@ function splitAt(t) {
   if (!targets.length) targets = project.clips.filter((c) => c.start + 0.02 < t && t < end(c) - 0.02);
   else targets = [...targets, ...linked(targets[0]).filter((c) => c.start + 0.02 < t && t < end(c) - 0.02)];
   if (!targets.length) { status('재생 위치에 자를 클립이 없어요.', true); return; }
-  edit(() => {
-    const newLinks = {};
-    for (const c of targets) {
-      const cut = c.src_in + (t - c.start) * c.speed;
-      const right = { ...c, id: uid(), src_in: cut, start: t, color: { ...c.color }, vol_keys: [] };
-      if (c.link) right.link = (newLinks[c.link] ||= uid());
-      if (c.vol_keys.length) {   // 키프레임은 자른 자리에서 둘로 나뉩니다 (경계 값이 양쪽에 같게 남음)
-        const lt = t - c.start, v = envAt(c.vol_keys, lt);
-        right.vol_keys = shiftKeys(c.vol_keys, lt);
-        c.vol_keys = [...c.vol_keys.filter((k) => k.t < lt), { t: lt, v }];
-      }
-      c.src_out = cut;
-      project.clips.push(right);
-      if (c.id === sel.clip) sel.clip = right.id;
+  edit(() => { splitTargets(targets, t); });
+}
+// targets 클립들을 t(타임라인 초)에서 둘로 나누고, 새로 생긴 오른쪽 클립들을 돌려줍니다 (edit 안에서 부르세요)
+function splitTargets(targets, t) {
+  const newLinks = {}, made = [];
+  for (const c of targets) {
+    const cut = c.src_in + (t - c.start) * c.speed;
+    const right = { ...c, id: uid(), src_in: cut, start: t, color: { ...c.color }, vol_keys: [] };
+    if (c.link) right.link = (newLinks[c.link] ||= uid());
+    if (c.vol_keys.length) {   // 키프레임은 자른 자리에서 둘로 나뉩니다 (경계 값이 양쪽에 같게 남음)
+      const lt = t - c.start, v = envAt(c.vol_keys, lt);
+      right.vol_keys = shiftKeys(c.vol_keys, lt);
+      c.vol_keys = [...c.vol_keys.filter((k) => k.t < lt), { t: lt, v }];
     }
-  });
+    c.src_out = cut;
+    project.clips.push(right); made.push(right);
+    if (c.id === sel.clip) sel.clip = right.id;
+  }
+  return made;
 }
 function deleteSelected(withLinks = true) {
   if (sel.cue) return deleteCue();
@@ -957,6 +1018,7 @@ function renderSubInspector(box, cue, result) {
       <div class="row"><button id="cSplit">✂ 재생 위치에서 자르기</button><button id="cDel">🗑 지우기</button></div>`
     : `<div class="cuelist">${cues.length ? cues.map((c) => `<div data-cue="${c.id}"><small>${fmt(c.start)}</small>${escapeHtml(c.text.replace(/\n/g, ' ')) || '(빈 자막)'}</div>`).join('') : '<p class="muted">아직 자막이 없어요.</p>'}</div>
       <div class="row"><button id="cAdd" class="primary">＋ 재생 위치에 자막</button></div>`}
+    ${field('영상에 입힐 자막 언어', `<select id="cShowLang"><option value="">모든 언어</option>${[...new Set([project.subtitle_lang, ...project.subtitles.map((q) => q.lang)].filter(Boolean))].map((l) => `<option value="${l}" ${l === project.subtitle_lang ? 'selected' : ''}>${escapeHtml(AI_LANGS[l] || l)}</option>`).join('')}</select>`)}
     <div class="row" style="margin-top:8px"><button id="cSrt">SRT 파일로 내보내기</button></div>
     ${subStyleHtml()}${result}`;
   if (cue) {
@@ -976,6 +1038,7 @@ function renderSubInspector(box, cue, result) {
     box.querySelectorAll('[data-cue]').forEach((d) => (d.onclick = () => { sel.cue = d.dataset.cue; sel.subs = false; seek(cueById(sel.cue).start); renderHeads(); renderInspector(); }));
   }
   $('cSrt').onclick = exportSrt;
+  $('cShowLang').onchange = (e) => edit(() => (project.subtitle_lang = e.target.value));
   bindSubStyle();
 }
 function renderInspector() {
@@ -1362,7 +1425,7 @@ function edges() {
   return [...new Set([0, projectLength(), ...project.clips.flatMap((c) => [c.start, end(c)]), ...project.subtitles.flatMap((c) => [c.start, c.end])].map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
 }
 document.addEventListener('keydown', (e) => {
-  if (e.target.matches('input[type=text], input[type=number], select, textarea')) return;
+  if ($('aiDlg').open || e.target.matches('input[type=text], input[type=number], select, textarea')) return;
   const k = e.key, mod = e.metaKey || e.ctrlKey;
   if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
   if (mod && (k === 'y' || k === 'Y')) { e.preventDefault(); doRedo(); return; }
@@ -1422,6 +1485,207 @@ $('zoom').value = ui.zoom; $('latency').value = ui.latency; $('monitorChk').chec
 afterChange();
 loadMedia().then(loadPeaksFor);
 // 테스트·디버깅용
+// ================================================================ AI 도구 (자동 자막 · 무음/군말 자르기 · 장면 나누기 · 노이즈 제거 · 읽어 주기 · 번역 더빙)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const langOpts = (sel, auto) => (auto ? `<option value="">자동 감지</option>` : '')
+  + Object.entries(AI_LANGS).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v}</option>`).join('');
+let aiBusy = false, aiCuts = null, aiScenes = null;
+
+async function aiJob(path, body, say) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : '요청이 올바르지 않아요.');
+  const t0 = Date.now();
+  for (;;) {
+    const s = await (await fetch(`/api/ai/jobs/${j.job}`)).json();
+    if (s.status === 'done') return s.result || {};
+    if (s.status === 'error') throw new Error(s.error || '실패');
+    say(`${s.status === 'queued' ? '앞 작업을 기다리는 중' : '작업 중'}… ${Math.round((Date.now() - t0) / 1000)}초 (처음엔 모델을 내려받느라 오래 걸려요)`);
+    await sleep(1200);
+  }
+}
+// 편집 대상 클립: 고른 클립(또는 그와 연결된 클립), 없으면 재생 위치 아래의 클립
+function aiClip(kind) {
+  const isK = (c) => (trackOf(c) || {}).kind === kind;
+  const s = clipById(sel.clip);
+  let c = s && (isK(s) ? s : linked(s).find(isK));
+  if (!c) { const t = playhead(); c = project.clips.find((k) => isK(k) && k.start <= t && t < end(k)); }
+  if (c && !(media[c.media] || {})[kind === 'audio' ? 'has_audio' : 'has_video']) c = null;
+  if (!c) throw new Error(kind === 'audio' ? '소리가 있는 클립을 먼저 고르세요 (타임라인에서 클릭).' : '영상 클립을 먼저 고르세요 (타임라인에서 클릭).');
+  return c;
+}
+const mediaToTl = (c, m) => c.start + (m - c.src_in) / c.speed;
+
+// ---- 1. 자동 자막
+async function aiSubs(say) {
+  const c = aiClip('audio');
+  const res = await aiJob('/api/ai/transcribe', { media: c.media, lang: $('aiSubLang').value }, say);
+  const cues = [];
+  for (const q of res.cues) {
+    const s0 = Math.max(q.start, c.src_in), e0 = Math.min(q.end, c.src_out);
+    if (e0 - s0 < 0.05) continue;
+    cues.push({ id: uid(), start: mediaToTl(c, s0), end: mediaToTl(c, e0), text: q.text, lang: res.lang, source: 'ai' });
+  }
+  if (!cues.length) return '말소리를 찾지 못했어요.';
+  const a = c.start, b = end(c);
+  edit(() => {
+    project.subtitles = project.subtitles.filter((x) => !(x.source === 'ai' && x.lang === res.lang && x.end > a && x.start < b));
+    project.subtitles.push(...cues);
+  });
+  return `✅ 자막 ${cues.length}개를 만들었어요 (${AI_LANGS[res.lang] || res.lang}). 자막 트랙에서 고칠 수 있어요.`;
+}
+
+// ---- 2. 무음·군말 자르기
+async function aiCutScan(say) {
+  const c = aiClip('audio');
+  const silence = $('aiCutSil').checked, fillers = $('aiCutFil').checked;
+  if (!silence && !fillers) throw new Error('무음이나 군말 중 하나는 골라 주세요.');
+  const res = await aiJob('/api/ai/cuts', { media: c.media, lang: $('aiCutLang').value, silence, fillers, min_silence: +$('aiCutMin').value }, say);
+  const cuts = res.cuts.map((x) => ({ s: Math.max(x.start, c.src_in), e: Math.min(x.end, c.src_out), kind: x.kind }))
+    .filter((x) => x.e - x.s > 0.05).map((x) => ({ ...x, a: mediaToTl(c, x.s), b: mediaToTl(c, x.e) }));
+  aiCuts = { clip: c.id, cuts };
+  $('aiS2b').hidden = !cuts.length;
+  const total = cuts.reduce((s, x) => s + (x.b - x.a), 0);
+  return cuts.length ? `${cuts.length}곳, 총 ${total.toFixed(1)}초를 줄일 수 있어요 (무음 ${cuts.filter((x) => x.kind.includes('silence')).length} · 군말 ${cuts.filter((x) => x.kind.includes('filler')).length}). 아래 버튼으로 잘라내면 빈틈이 붙어요.` : '자를 곳이 없어요.';
+}
+// [a,b] 구간(타임라인 초)을 members 클립들에서 잘라내고 뒤를 앞으로 당깁니다. 자막도 members가 차지한 범위 안에서 같이 당깁니다.
+function rippleCut(members, a, b, span) {
+  const d = b - a, EPS = 1e-3, links = {};
+  for (const k of [...members]) {
+    const k0 = k.start, k1 = end(k);
+    if (k1 <= a + EPS) continue;
+    if (k0 >= b - EPS) { k.start -= d; continue; }
+    const hasL = k0 < a - EPS, hasR = k1 > b + EPS;
+    const srcL = k.src_in + (a - k0) * k.speed, srcR = k.src_in + (b - k0) * k.speed, oldOut = k.src_out, keys = k.vol_keys;
+    const trimKeys = () => { const lt = a - k0; return keys.length ? [...keys.filter((x) => x.t < lt), { t: lt, v: envAt(keys, lt) }] : []; };
+    if (hasL && hasR) {
+      const right = { ...k, id: uid(), src_in: srcR, src_out: oldOut, start: a, color: { ...k.color }, vol_keys: shiftKeys(keys, b - k0) };
+      if (k.link) right.link = (links[k.link] ||= uid());
+      k.vol_keys = trimKeys(); k.src_out = srcL;
+      project.clips.push(right); members.push(right);
+    } else if (hasL) { k.vol_keys = trimKeys(); k.src_out = srcL; }
+    else if (hasR) { k.src_in = srcR; k.start = a; k.vol_keys = shiftKeys(keys, b - k0); }
+    else { project.clips = project.clips.filter((x) => x !== k); members.splice(members.indexOf(k), 1); }
+  }
+  project.subtitles = project.subtitles.filter((q) => {
+    if (q.start >= span.end - EPS) return true;
+    if (q.start >= b - EPS) { q.start -= d; q.end -= d; return true; }
+    if (q.end <= a + EPS) return true;
+    if (q.start >= a) q.start = a; else if (q.end <= b) q.end = a;
+    if (q.end > b) q.end -= d; else if (q.end > a) q.end = a;
+    return q.end - q.start >= 0.05;
+  });
+  span.end -= d;
+}
+function aiCutApply() {
+  const c = aiCuts && clipById(aiCuts.clip);
+  if (!c) throw new Error('분석한 클립이 바뀌었어요. 다시 분석해 주세요.');
+  const members = [c, ...linked(c)], span = { end: Math.max(...members.map(end)) };
+  const ranges = aiCuts.cuts.map((x) => [x.a, x.b]).sort((p, q) => q[0] - p[0]);
+  const before = members.reduce((s, k) => Math.max(s, end(k)), 0) - c.start;
+  edit(() => { for (const [a, b] of ranges) rippleCut(members, a, b, span); });
+  const after = Math.max(...members.map(end)) - c.start;
+  aiCuts = null; $('aiS2b').hidden = true;
+  return `✅ ${ranges.length}곳을 잘라냈어요 (${before.toFixed(1)}초 → ${after.toFixed(1)}초). ⌘Z로 되돌릴 수 있어요.`;
+}
+
+// ---- 3. 장면 자동 나누기
+async function aiSceneScan(say) {
+  const c = aiClip('video');
+  const res = await aiJob('/api/ai/scenes', { media: c.media, threshold: +$('aiSceneTh').value }, say);
+  const times = res.times.filter((t) => t > c.src_in + 0.1 && t < c.src_out - 0.1).map((t) => mediaToTl(c, t));
+  aiScenes = { clip: c.id, times };
+  $('aiS3b').hidden = !times.length;
+  return times.length ? `장면이 바뀌는 곳 ${times.length}군데를 찾았어요 (${times.map((t) => fmt(t)).slice(0, 6).join(', ')}${times.length > 6 ? ' …' : ''}).` : '장면 전환을 찾지 못했어요. 민감도를 높여 보세요.';
+}
+function aiSceneApply() {
+  const c = aiScenes && clipById(aiScenes.clip);
+  if (!c) throw new Error('분석한 클립이 바뀌었어요. 다시 찾아 주세요.');
+  const members = [c, ...linked(c)];
+  edit(() => {
+    for (const t of aiScenes.times) members.push(...splitTargets(members.filter((k) => k.start + 0.02 < t && t < end(k) - 0.02), t));
+  });
+  const n = aiScenes.times.length; aiScenes = null; $('aiS3b').hidden = true;
+  return `✅ ${n + 1}개 장면으로 나눴어요.`;
+}
+
+// ---- 4. 노이즈 제거
+async function aiDenoise(say) {
+  const c = aiClip('audio');
+  const res = await aiJob('/api/ai/denoise', { media: c.media }, say);
+  media[res.media.id] = res.media; renderBin();
+  edit(() => { c.media = res.media.id; });
+  loadPeaksFor();
+  return `✅ 이 클립이 노이즈를 뺀 소리로 바뀌었어요 (${res.engine === 'rnnoise' ? 'RNNoise AI' : 'FFT 방식 — scripts/setup_ai_tools.sh를 실행하면 AI(RNNoise) 방식이 돼요'}). 원본은 보관함에 그대로 있어요.`;
+}
+
+// ---- 5. 대본 읽기 (TTS)
+async function aiTts(say) {
+  const text = $('aiTtsText').value.trim();
+  if (!text) throw new Error('읽을 글을 입력해 주세요.');
+  const res = await aiJob('/api/ai/tts', { text, lang: $('aiTtsLang').value, rate: +$('aiTtsRate').value }, say);
+  media[res.media.id] = res.media; renderBin();
+  const t = playhead(), tr = freeAudioTrack(t, t + res.media.duration, armedTrack()) || armedTrack();
+  placeMedia(res.media.id, tr, t);
+  return `✅ 재생 위치(${fmt(t)})에 ${res.media.duration.toFixed(1)}초짜리 음성을 넣었어요.`;
+}
+
+// ---- 6. 번역 더빙
+async function aiDub(say) {
+  const src = $('aiDubSrc').value, dst = $('aiDubDst').value;
+  if (src === dst) throw new Error('원본 언어와 번역할 언어가 같아요.');
+  const base = project.subtitles.filter((q) => q.text.trim() && q.source !== 'translation' && (q.lang === src || !q.lang)).sort((x, y) => x.start - y.start);
+  if (!base.length) throw new Error(`번역할 ${AI_LANGS[src]} 자막이 없어요. 먼저 1번으로 자막을 만들거나 자막 트랙에 입력하세요.`);
+  say('자막을 번역하는 중…');
+  const tr = await aiJob('/api/ai/translate', { texts: base.map((q) => q.text), src, dst }, say);
+  const cues = base.map((q, i) => ({ id: uid(), start: q.start, end: q.end, text: tr.texts[i], lang: dst, source: 'translation' })).filter((q) => q.text.trim());
+  edit(() => {
+    project.subtitles = project.subtitles.filter((q) => !(q.source === 'translation' && q.lang === dst));
+    project.subtitles.push(...cues);
+    project.subtitle_lang = dst;
+  });
+  if (!$('aiDubVoice').checked) return `✅ ${AI_LANGS[dst]} 번역 자막 ${cues.length}개를 만들었어요. 미리보기·내보내기에는 ${AI_LANGS[dst]} 자막만 나와요.`;
+  say('번역한 문장을 읽는 중…');
+  const res = await aiJob('/api/ai/dub', { cues: cues.map(({ start, end: e, text }) => ({ start, end: e, text })), lang: dst, rate: +$('aiDubRate').value }, say);
+  media[res.media.id] = res.media; renderBin();
+  let track = freeAudioTrack(0, res.media.duration, armedTrack());
+  if (!track) { track = newTrack('audio', { name: `더빙 ${dst}`, voice: true }); edit(() => project.tracks.push(track)); }
+  placeMedia(res.media.id, track, 0);
+  return `✅ ${AI_LANGS[dst]} 자막 ${cues.length}개와 더빙 음성을 넣었어요. 원래 말소리는 트랙의 숨김/음소거로 꺼 주세요.`;
+}
+
+const AI_SECTIONS = [
+  ['aiS1', aiSubs], ['aiS2', aiCutScan], ['aiS2b', aiCutApply], ['aiS3', aiSceneScan], ['aiS3b', aiSceneApply],
+  ['aiS4', aiDenoise], ['aiS5', aiTts], ['aiS6', aiDub],
+];
+for (const [id, fn] of AI_SECTIONS) {
+  $(id).onclick = async () => {
+    if (aiBusy) return;
+    const out = $(id).closest('section').querySelector('.aimsg');
+    const say = (m, err) => { out.textContent = m; out.className = 'aimsg' + (err ? ' err' : ''); };
+    aiBusy = true; $('aiDlg').classList.add('busy'); document.querySelectorAll('#aiDlg button').forEach((b) => (b.disabled = true));
+    try { say(await fn(say)); } catch (e) { say('⚠ ' + (e.message || e), true); }
+    finally { aiBusy = false; $('aiDlg').classList.remove('busy'); document.querySelectorAll('#aiDlg button').forEach((b) => (b.disabled = false)); $('aiClose').disabled = false; }
+  };
+}
+async function openAi() {
+  $('aiTarget').textContent = (() => {
+    const c = clipById(sel.clip); return c ? `선택한 클립: ${(media[c.media] || {}).name || '?'}` : '선택한 클립이 없으면 재생 위치 아래의 클립에 적용돼요.';
+  })();
+  $('aiDlg').showModal();
+  try {
+    const t = await (await fetch('/api/ai/tools')).json();
+    $('aiSetup').innerHTML = t.installed ? '' : `⚠ 받아쓰기·번역(1·2의 군말·6)은 설치가 필요해요. 터미널에서 <code>${escapeHtml(t.setup)}</code> 를 한 번 실행하세요 (모델 내려받기 포함, 처음 한 번만). 나머지 기능은 바로 써요.`;
+    $('aiTtsNote').textContent = t.tts ? '' : '⚠ 이 컴퓨터에는 읽어 주는 엔진이 없어요 (맥은 기본 내장).';
+  } catch {}
+}
+$('aiBtn').onclick = openAi;
+$('aiClose').onclick = () => $('aiDlg').close();
+$('aiCutMin').oninput = (e) => ($('aiCutMinV').textContent = (+e.target.value).toFixed(1) + '초');
+$('aiSceneTh').oninput = (e) => ($('aiSceneThV').textContent = (+e.target.value).toFixed(2));
+$('aiTtsRate').oninput = (e) => ($('aiTtsRateV').textContent = '×' + (+e.target.value).toFixed(1));
+$('aiDubRate').oninput = (e) => ($('aiDubRateV').textContent = '×' + (+e.target.value).toFixed(1));
+for (const [id, v, auto] of [['aiSubLang', 'ko', true], ['aiCutLang', 'ko'], ['aiTtsLang', 'ko'], ['aiDubSrc', 'ko'], ['aiDubDst', 'en']]) $(id).innerHTML = langOpts(v, auto);
 window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; } };
 })();
 </script>
