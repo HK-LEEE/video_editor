@@ -31,8 +31,13 @@ def seedvc_python() -> Path:
     return Path(os.environ.get("SEEDVC_PYTHON") or ROOT / ".venv-seedvc" / "bin" / "python")
 
 
+def ready_marker() -> Path:
+    return seedvc_python().parent.parent / ".seedvc-ready"
+
+
 def is_installed() -> bool:
-    return (seedvc_dir() / "inference.py").exists() and seedvc_python().exists()
+    """설치 스크립트가 끝까지 성공해야 만들어지는 표식 파일로 판정합니다 (폴더만 있는 반쯤 설치된 상태 제외)."""
+    return (seedvc_dir() / "inference.py").exists() and seedvc_python().exists() and ready_marker().exists()
 
 
 def is_ai_voice(voice: str) -> bool:
