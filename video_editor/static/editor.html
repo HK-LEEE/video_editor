@@ -520,7 +520,51 @@ function renderHeads() {
 // ================================================================ 속성 패널
 let voices = [];
 fetch('/api/voices').then((r) => r.json()).then((v) => { voices = v; renderInspector(); });
-const voiceLabel = (n) => (voices.find((v) => v.name === n) || { label: n }).label;
+const voiceLabel = (n) => n.startsWith('ai:') ? 'AI · ' + ((media[n.slice(3)] || {}).name || '?') : (voices.find((v) => v.name === n) || { label: n }).label;
+const aiState = new Map();   // `${media}|${ref}` -> 'ready' | 'running' | 'error:..' | 'none'
+async function aiCheck(c) {
+  const ref = c.voice.slice(3), k = `${c.media}|${ref}`;
+  const r = await (await fetch(`/api/ai/ready?media=${c.media}&ref=${ref}`)).json();
+  aiState.set(k, r.ready ? 'ready' : r.job ? 'running' : 'none');
+  if (r.job) aiPoll(c, r.job);
+  renderAiBox(c);
+}
+async function aiStart(c) {
+  const ref = c.voice.slice(3), k = `${c.media}|${ref}`;
+  aiState.set(k, 'running'); renderAiBox(c);
+  const r = await fetch('/api/ai/convert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ media: c.media, ref }) });
+  const j = await r.json();
+  if (!r.ok) { aiState.set(k, 'error:' + (j.detail || '실패')); renderAiBox(c); return; }
+  if (j.status === 'done') return aiDone(c);
+  aiPoll(c, j.job);
+}
+function aiDone(c) {
+  aiState.set(`${c.media}|${c.voice.slice(3)}`, 'ready');
+  peaksCache.delete(peakKey(c)); loadPeaksFor(); refreshMix(); renderAiBox(c);
+}
+function aiPoll(c, job) {
+  const k = `${c.media}|${c.voice.slice(3)}`;
+  const t = setInterval(async () => {
+    const j = await (await fetch(`/api/ai/jobs/${job}`)).json();
+    if (j.status === 'done') { clearInterval(t); aiDone(c); }
+    else if (j.status === 'error') { clearInterval(t); aiState.set(k, 'error:' + j.error); renderAiBox(c); }
+  }, 2000);
+}
+function renderAiBox(c) {
+  const box = $('aiBox'); if (!box || !c.voice.startsWith('ai:')) return;
+  const st = aiState.get(`${c.media}|${c.voice.slice(3)}`) || 'none';
+  if (st === 'ready') box.innerHTML = '<p class="muted">✅ AI 변환 완료 — 샘플 목소리로 들려요.</p>';
+  else if (st === 'running') box.innerHTML = '<p class="muted">⏳ AI 변환 중… (처음엔 모델을 내려받느라 오래 걸려요)</p>';
+  else {
+    box.innerHTML = `${st.startsWith('error:') ? `<p class="muted">⚠ ${escapeHtml(st.slice(6))}</p>` : '<p class="muted">샘플 목소리로 바꾸려면 변환을 만들어야 해요. 변환 전에는 원본이 들려요.</p>'}<button id="aiGo">🤖 AI 변환 만들기</button>`;
+    $('aiGo').onclick = () => aiStart(c);
+  }
+}
+function aiOptions(c) {  // 보관함의 소리/녹음 파일을 '샘플 목소리'로 쓸 수 있어요 (약 10초 권장)
+  const refs = Object.values(media).filter((m) => m.has_audio && m.id !== c.media);
+  const cur = c.voice.startsWith('ai:') && !refs.some((m) => 'ai:' + m.id === c.voice) ? `<option value="${c.voice}" selected>${escapeHtml(voiceLabel(c.voice))}</option>` : '';
+  return `<optgroup label="AI 변환 · 샘플 목소리로 바꾸기">${cur}${refs.map((m) => `<option value="ai:${m.id}" ${'ai:' + m.id === c.voice ? 'selected' : ''}>AI · ${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('')}</optgroup>`;
+}
 function field(label, html) { return `<label class="field"><span>${label}</span>${html}</label>`; }
 function renderInspector() {
   const box = $('inspector'), c = clipById(sel.clip), t = !c && project.tracks.find((k) => k.id === sel.track);
@@ -528,16 +572,18 @@ function renderInspector() {
   if (c) {
     const tr = trackOf(c), m = media[c.media] || { name: '?' }, isAudio = tr.kind === 'audio';
     box.innerHTML = `<h2>클립</h2><p><b>${escapeHtml(m.name)}</b><br><span class="muted">${escapeHtml(tr.name)} · ${fmt(c.start)} – ${fmt(end(c))} (${len(c).toFixed(2)}초)${c.link ? ' · 🔗 연결됨' : ''}</span></p>
-      ${isAudio ? field('목소리', `<select id="iVoice">${voices.map((v) => `<option value="${v.name}" ${v.name === c.voice ? 'selected' : ''}>${v.label}</option>`).join('')}</select>`)
-        + field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`)
+      ${isAudio ? field('목소리', `<select id="iVoice">${voices.map((v) => `<option value="${v.name}" ${v.name === c.voice ? 'selected' : ''}>${v.label}</option>`).join('')}${aiOptions(c)}</select>`)
+        + '<div id="aiBox"></div>'
+        + (c.voice.startsWith('ai:') ? '' : field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`))
         + field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
         : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>'}
       <div class="row"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link ? '<button id="iUnlink">연결 해제</button>' : ''}</div>
       ${result}`;
+    if (isAudio && c.voice.startsWith('ai:')) aiCheck(c);
     if (isAudio) {
-      $('iVoice').onchange = (e) => { edit(() => (c.voice = e.target.value)); lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
-      $('iInt').oninput = (e) => { $('iIntV').textContent = (+e.target.value).toFixed(1); };
-      $('iInt').onchange = (e) => { edit(() => (c.intensity = +e.target.value)); lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
+      $('iVoice').onchange = (e) => { edit(() => (c.voice = e.target.value)); if (!c.voice.startsWith('ai:')) lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
+      if ($('iInt')) $('iInt').oninput = (e) => { $('iIntV').textContent = (+e.target.value).toFixed(1); };
+      if ($('iInt')) $('iInt').onchange = (e) => { edit(() => (c.intensity = +e.target.value)); lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
       $('iGain').oninput = (e) => { begin(); c.gain = +e.target.value; $('iGainV').textContent = Math.round(c.gain * 100) + '%'; };
       $('iGain').onchange = () => commit();
     }

@@ -26,6 +26,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from . import ai_voice
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
 
@@ -129,10 +130,38 @@ def voice_for(name: str) -> VoiceSettings:
     return presets[name]
 
 
+def ai_cache(ws: Workspace, mid: str, ref: str) -> Path:
+    return ws.root / "cache" / ai_voice.cache_name(mid, ref)
+
+
+def convert_ai(ws: Workspace, mid: str, ref: str) -> None:
+    """AI 음성 변환을 돌려 캐시에 저장 (오래 걸립니다). 길이는 원본과 같게 맞춥니다."""
+    src = media_audio(ws, mid)
+    sample = media_audio(ws, ref)
+    if not src.size or not sample.size:
+        raise HTTPException(400, "소리가 없는 미디어입니다.")
+    src_wav = ws.root / "cache" / f"{mid}_raw.wav"
+    ref_wav = ws.root / "cache" / f"{ref}_raw.wav"
+    raw_out = ws.root / "cache" / f"ai_{uuid.uuid4().hex}.wav"
+    try:
+        ai_voice.run_seedvc(src_wav, ref_wav, raw_out)
+        y = load_audio(raw_out)
+    finally:
+        raw_out.unlink(missing_ok=True)
+    y = np.pad(y, (0, max(0, src.size - y.size)))[: src.size]
+    save_wav(ai_cache(ws, mid, ref), peak_limit(y, SR))
+
+
 def clip_audio(ws: Workspace, mid: str, voice: str = ORIGINAL, intensity: float = 1.0) -> np.ndarray:
     """미디어 소리에 목소리 변조를 적용한 결과 (캐시). 시간축은 원본과 같습니다."""
     if voice == ORIGINAL:
         return media_audio(ws, mid)
+    if ai_voice.is_ai_voice(voice):
+        cache = ai_cache(ws, mid, ai_voice.ref_id(voice))
+        if not cache.exists():  # 아직 변환 전이면 원본 소리 (내보내기는 막습니다)
+            return media_audio(ws, mid)
+        a, _ = sf.read(cache, dtype="float32")
+        return a
     intensity = round(float(intensity), 2)
     cache = ws.root / "cache" / f"{mid}_{voice}_{intensity}.wav"
     if not cache.exists():
@@ -288,12 +317,16 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     return peak_limit(mix, SR)
 
 
-def project_key(p: Project) -> str:
-    return hashlib.sha1(p.model_dump_json().encode()).hexdigest()[:16]
+def project_key(p: Project, ws: Workspace | None = None) -> str:
+    raw = p.model_dump_json()
+    if ws is not None:  # AI 변환이 끝나면 같은 프로젝트라도 소리가 달라집니다
+        raw += "".join("1" if ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists() else "0"
+                       for c in p.clips if ai_voice.is_ai_voice(c.voice))
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
 def mix_file(ws: Workspace, p: Project) -> Path:
-    out = ws.root / "cache" / f"mix_{project_key(p)}.wav"
+    out = ws.root / "cache" / f"mix_{project_key(p, ws)}.wav"
     if not out.exists():
         save_wav(out, render_audio(ws, p))
     return out
@@ -339,6 +372,10 @@ def export_video(ws: Workspace, p: Project) -> Path:
     length = project_length(p)
     if length <= 0:
         raise HTTPException(400, "타임라인이 비어 있습니다.")
+    pending = [c for c in p.clips if ai_voice.is_ai_voice(c.voice)
+               and not ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists()]
+    if pending:
+        raise HTTPException(409, f"AI 변환이 아직 안 된 클립이 {len(pending)}개 있어요. 속성 패널에서 'AI 변환 만들기'를 먼저 눌러 주세요.")
     wav = mix_file(ws, p)
     W, H = canvas_size(ws, p)
     segs = video_segments(p, length)
@@ -380,6 +417,11 @@ def export_video(ws: Workspace, p: Project) -> Path:
 
 # ================================================================ API
 
+class AIConvert(BaseModel):
+    media: str
+    ref: str
+
+
 def make_router(ws: Workspace) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -387,6 +429,37 @@ def make_router(ws: Workspace) -> APIRouter:
     def voices():
         return [{"name": ORIGINAL, "label": "원본 (변조 없음)"}] + \
                [{"name": n, "label": s.label} for n, s in load_presets().items()]
+
+    # ---- AI 음성 변환 (Seed-VC)
+    jobs = ai_voice.JobRunner()
+
+    @router.get("/ai/status")
+    def ai_status():
+        return {"installed": ai_voice.is_installed(), "setup": "bash scripts/setup_ai_voice.sh"}
+
+    @router.get("/ai/ready")
+    def ai_ready(media: str, ref: str):
+        _check_id(media), _check_id(ref)
+        job = jobs.active(media, ref)
+        return {"ready": ai_cache(ws, media, ref).exists(), "job": job.id if job else None}
+
+    @router.post("/ai/convert")
+    def ai_convert(b: AIConvert):
+        _check_id(b.media), _check_id(b.ref)
+        ws.meta(b.media), ws.meta(b.ref)
+        if ai_cache(ws, b.media, b.ref).exists():
+            return {"status": "done", "job": None}
+        if not ai_voice.is_installed():
+            raise HTTPException(503, "AI 음성 변환이 설치되지 않았습니다. 터미널에서 `bash scripts/setup_ai_voice.sh`를 실행하세요.")
+        job = jobs.active(b.media, b.ref) or jobs.submit(b.media, b.ref, lambda: convert_ai(ws, b.media, b.ref))
+        return {"status": job.status, "job": job.id}
+
+    @router.get("/ai/jobs/{jid}")
+    def ai_job(jid: str):
+        job = jobs.jobs.get(jid)
+        if not job:
+            raise HTTPException(404, "작업을 찾을 수 없습니다.")
+        return {"status": job.status, "error": job.error}
 
     @router.post("/media")
     def upload_media(file: UploadFile = File(...), recorded: bool = Form(False), name: str = Form("")):
