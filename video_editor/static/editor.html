@@ -153,15 +153,23 @@ const status = (msg, err) => { $('status').textContent = msg || ''; $('status').
 
 // ================================================================ 상태
 const newTrack = (kind, o = {}) => ({ id: uid(), kind, name: '', mute: false, solo: false, volume: 1, voice: false,
-  room: 0, level: false, gate: false, tone: false, duck: 0, ...o });
+  room: 0, level: false, gate: false, tone: false, duck: 0, vol_keys: [], ...o });
 const SUB_DEFAULTS = { font: 'Apple SD Gothic Neo', size: 0.06, bold: true, color: '#ffffff', outline_color: '#000000', outline: 0.1,
   bg_color: '#000000', bg_opacity: 0, x: 0.5, y: 0.85, max_width: 0.9 };
-const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true };
+const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true, speed: 1 };
+const COLOR_DEFAULT = { brightness: 0, contrast: 1, saturation: 1, temperature: 0 };
+// 소리 믹스에 영향이 없는 클립 항목 (바꿔도 미리듣기를 다시 만들지 않음). 속도·볼륨 키프레임은 소리에 영향이 있으니 들어 있지 않습니다.
+const MIX_IGNORE = ['transition', 'transition_dur', 'layout', 'pip_x', 'pip_y', 'pip_w', 'pip_opacity', 'pip_border', 'color'];
 // 예전에 저장된 프로젝트나 새로 만든 클립에 빠진 항목을 채웁니다
 function normalize(p) {
   p.subtitles ||= []; p.subtitle_lang ||= '';
   p.subtitle_style = { ...SUB_DEFAULTS, ...(p.subtitle_style || {}) };
-  for (const c of p.clips) for (const [k, v] of Object.entries(CLIP_DEFAULTS)) if (c[k] === undefined) c[k] = v;
+  for (const t of p.tracks) { t.vol_keys ||= []; t.vol_keys.sort((a, b) => a.t - b.t); }
+  for (const c of p.clips) {
+    for (const [k, v] of Object.entries(CLIP_DEFAULTS)) if (c[k] === undefined) c[k] = v;
+    c.vol_keys ||= []; c.vol_keys.sort((a, b) => a.t - b.t); c.color ||= {};
+    for (const [k, v] of Object.entries(COLOR_DEFAULT)) if (c.color[k] === undefined) c.color[k] = v;
+  }
   return p;
 }
 function defaultProject() {
@@ -184,7 +192,7 @@ const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ project,
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
 const cueById = (id) => project.subtitles.find((c) => c.id === id);
-const len = (c) => c.src_out - c.src_in;
+const len = (c) => (c.src_out - c.src_in) / (c.speed || 1);   // 타임라인에서 차지하는 길이 (속도 반영)
 const end = (c) => c.start + len(c);
 const projectLength = () => Math.max(0, ...project.clips.map(end));
 const linked = (c) => (c && c.link ? project.clips.filter((k) => k.link === c.link && k !== c) : []);
@@ -330,7 +338,7 @@ const playhead = () => (playing ? playing.t0 + (actx().currentTime - playing.c0)
 const projectBody = () => ({ tracks: project.tracks, clips: project.clips, subtitles: project.subtitles,
   subtitle_style: project.subtitle_style, subtitle_lang: project.subtitle_lang });
 // 소리 믹스에는 자막·전환·PiP가 영향이 없으니 빼서, 그걸 바꿔도 미리듣기를 다시 만들지 않게 합니다
-const mixBody = () => ({ tracks: project.tracks, clips: project.clips.map((c) => { const o = { ...c }; for (const k in CLIP_DEFAULTS) delete o[k]; return o; }) });
+const mixBody = () => ({ tracks: project.tracks, clips: project.clips.map((c) => { const o = { ...c }; for (const k of MIX_IGNORE) delete o[k]; return o; }) });
 const mixes = new Map();
 function ensureMix() {
   const key = JSON.stringify(mixBody());
@@ -386,6 +394,53 @@ function refreshMix() {
   }, 400);
 }
 
+// ================================================================ 키프레임 · 색 보정 도우미
+// 점 사이를 직선으로 잇고, 첫 점 앞·끝 점 뒤는 그 값을 그대로 씁니다 (서버와 같은 규칙). 점이 없으면 1.
+function envAt(keys, t) {
+  if (!keys.length) return 1;
+  const ks = [...keys].sort((a, b) => a.t - b.t);
+  if (t <= ks[0].t) return ks[0].v;
+  for (let i = 1; i < ks.length; i++) if (t <= ks[i].t) { const a = ks[i - 1], b = ks[i]; return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t); }
+  return ks[ks.length - 1].v;
+}
+// 클립 앞쪽이 d초 잘려 나가면(d>0) 점들도 d초 앞당기고, 잘린 자리의 값을 0초 점으로 남깁니다. d<0이면 그냥 뒤로 밀립니다.
+function shiftKeys(keys, d) {
+  if (!keys.length) return [];
+  if (d <= 0) return keys.map((k) => ({ t: k.t - d, v: k.v }));
+  return [{ t: 0, v: envAt(keys, d) }, ...keys.filter((k) => k.t > d + 1e-6).map((k) => ({ t: k.t - d, v: k.v }))];
+}
+// 미리보기의 색 보정: ffmpeg eq(밝기는 더하기, 대비는 0.5 기준)와 같은 식을 SVG 필터로 만들어 video에 겁니다.
+const TEMP_GAIN = 0.2;
+const isNeutral = (col) => !col || (!col.brightness && col.contrast === 1 && col.saturation === 1 && !col.temperature);
+let svgDefs = null;
+function colorFilter(col) {
+  if (isNeutral(col)) return 'none';
+  const id = 'cf_' + ['brightness', 'contrast', 'saturation', 'temperature'].map((k) => Math.round(col[k] * 1000)).join('_').replace(/-/g, 'm');
+  if (!document.getElementById(id)) {
+    const NS = 'http://www.w3.org/2000/svg', el = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+    if (!svgDefs) {
+      const svg = el('svg', { width: 0, height: 0, style: 'position:absolute' }); svgDefs = el('defs', {}); svg.appendChild(svgDefs); document.body.appendChild(svg);
+    }
+    const f = el('filter', { id, 'color-interpolation-filters': 'sRGB' });
+    const ct = el('feComponentTransfer', {});
+    for (const ch of ['R', 'G', 'B']) ct.appendChild(el('feFunc' + ch, { type: 'linear', slope: col.contrast, intercept: 0.5 - 0.5 * col.contrast + col.brightness }));
+    const T = TEMP_GAIN * col.temperature;
+    f.append(ct, el('feColorMatrix', { type: 'saturate', values: col.saturation }),
+      el('feColorMatrix', { type: 'matrix', values: `${1 + T} 0 0 0 0  0 1 0 0 0  0 0 ${1 - T} 0 0  0 0 0 1 0` }));
+    svgDefs.appendChild(f);
+  }
+  return `url(#${id})`;
+}
+const COLOR_PRESETS = {
+  '기본': COLOR_DEFAULT,
+  '선명': { brightness: 0.02, contrast: 1.15, saturation: 1.35, temperature: 0 },
+  '따뜻': { brightness: 0.02, contrast: 1.05, saturation: 1.1, temperature: 0.45 },
+  '차갑게': { brightness: 0, contrast: 1.05, saturation: 0.95, temperature: -0.45 },
+  '시네마': { brightness: -0.03, contrast: 1.25, saturation: 0.9, temperature: -0.15 },
+  '빈티지': { brightness: 0.03, contrast: 0.9, saturation: 0.7, temperature: 0.3 },
+  '흑백': { brightness: 0, contrast: 1.1, saturation: 0, temperature: 0 },
+};
+
 // ================================================================ 모니터 (보이는 영상 클립을 시간에 맞춰 표시)
 // 서버 내보내기와 같은 규칙: 아래 트랙부터 쌓고, PiP는 맨 위, 전환 효과는 새 클립이 시작하는 처음 몇 초 동안만 적용됩니다.
 const videoEls = new Map();
@@ -434,7 +489,9 @@ function sizeFrame() {
 let pipHits = [];
 function syncVideo(v, c, t) {
   const dur = (media[c.media] || {}).duration || c.src_out;
-  const want = Math.min(c.src_in + (t - c.start), Math.max(0, dur - 0.04));
+  const want = Math.min(c.src_in + (t - c.start) * c.speed, Math.max(0, dur - 0.04));
+  const rate = clamp(c.speed, 0.0625, 16);
+  if (v.playbackRate !== rate) v.playbackRate = rate;   // 영상은 소리를 내지 않으니 높이 걱정 없이 속도만 맞춥니다
   if (playing) {
     if (v.paused) { v.currentTime = want; v.play().catch(() => {}); }
     else if (Math.abs(v.currentTime - want) > 0.25) v.currentTime = want;
@@ -466,7 +523,7 @@ function updateMonitor(t) {
     const v = videoEl(`${c.media}|${n}`, c.media); keep.add(v);
     syncVideo(v, c, t);
     v.className = 'show' + (c.layout === 'pip' ? ' pip' : '');
-    Object.assign(v.style, { opacity: '1', clipPath: 'none', transform: 'none', left: '0', top: '0', width: '100%', height: '100%',
+    Object.assign(v.style, { opacity: '1', filter: colorFilter(c.color), clipPath: 'none', transform: 'none', left: '0', top: '0', width: '100%', height: '100%',
       outline: 'none', outlineOffset: '0', zIndex: z, ...css });
   };
   let dip = 0;
@@ -576,9 +633,14 @@ function splitAt(t) {
   edit(() => {
     const newLinks = {};
     for (const c of targets) {
-      const cut = c.src_in + (t - c.start);
-      const right = { ...c, id: uid(), src_in: cut, start: t };
+      const cut = c.src_in + (t - c.start) * c.speed;
+      const right = { ...c, id: uid(), src_in: cut, start: t, color: { ...c.color }, vol_keys: [] };
       if (c.link) right.link = (newLinks[c.link] ||= uid());
+      if (c.vol_keys.length) {   // 키프레임은 자른 자리에서 둘로 나뉩니다 (경계 값이 양쪽에 같게 남음)
+        const lt = t - c.start, v = envAt(c.vol_keys, lt);
+        right.vol_keys = shiftKeys(c.vol_keys, lt);
+        c.vol_keys = [...c.vol_keys.filter((k) => k.t < lt), { t: lt, v }];
+      }
       c.src_out = cut;
       project.clips.push(right);
       if (c.id === sel.clip) sel.clip = right.id;
@@ -778,6 +840,72 @@ function bindVideoClip(c) {
   })));
 }
 
+// ---- 속도 · 볼륨 키프레임 · 색 보정
+function speedHtml(c) {
+  return `<h2 class="sub">속도</h2>
+    ${field(`배속 <b id="iSpV">×${(+c.speed).toFixed(2)}</b>`, `<input type="range" id="iSp" min="-2" max="2" step="0.01" value="${Math.log2(c.speed)}">`)}
+    <div class="row" style="margin-bottom:6px">${[0.25, 0.5, 1, 1.5, 2, 4].map((v) => `<button data-speed="${v}">${v}×</button>`).join('')}</div>
+    <p class="muted">소리 높이는 그대로 유지돼요.${c.link ? ' 연결된 클립도 함께 바뀌어요.' : ''} 뒤 클립은 자동으로 밀리지 않아요.</p>`;
+}
+function setSpeed(c, v) {
+  v = clamp(Math.round(v * 100) / 100, 0.25, 4); if (Math.abs(v - 1) < 0.03) v = 1;
+  [c, ...linked(c)].forEach((k) => (k.speed = v));
+  return v;
+}
+function bindSpeed(c) {
+  $('iSp').oninput = (e) => { begin(); $('iSpV').textContent = '×' + setSpeed(c, 2 ** +e.target.value).toFixed(2); };
+  $('iSp').onchange = () => commit();
+  document.querySelectorAll('[data-speed]').forEach((b) => (b.onclick = () => edit(() => setSpeed(c, +b.dataset.speed))));
+}
+function kfHtml(keys, title, hint) {
+  return `<h2 class="sub">${title}</h2>
+    <div class="row" style="margin-bottom:6px"><button id="kfAdd">＋ 재생 위치에 점</button>${keys.length ? '<button id="kfClr">모두 지우기</button>' : ''}</div>
+    ${keys.map((k, i) => `<div class="row" style="margin-bottom:4px"><input type="number" data-kt="${i}" step="0.1" min="0" value="${k.t.toFixed(2)}"><span class="muted">초</span>
+      <input type="number" data-kv="${i}" step="5" min="0" max="400" value="${Math.round(k.v * 100)}"><span class="muted">%</span><button data-kd="${i}" title="점 지우기">✕</button></div>`).join('')}
+    <p class="muted">${hint}</p>`;
+}
+function kfAddAt(o, tAbs, v) {
+  const t = Math.round((tAbs - o.t0) * 100) / 100;
+  if (t < 0 || t > o.tmax + 1e-6) { status('재생 위치가 이 클립 안에 있어야 해요.', true); return; }
+  const val = v ?? Math.round(envAt(o.keys, t) * 100) / 100;
+  edit(() => {
+    if (!o.keys.length) o.keys.push({ t: 0, v: 1 }, { t: o.tmax === Infinity ? Math.max(projectLength(), t + 1) : o.tmax, v: 1 });
+    const near = o.keys.find((k) => Math.abs(k.t - t) < 0.02);
+    if (near) near.v = val; else o.keys.push({ t, v: val });
+  });
+}
+function bindKf() {
+  const o = kfOwner(); if (!o || !$('kfAdd')) return;
+  $('kfAdd').onclick = () => kfAddAt(o, playhead());
+  if ($('kfClr')) $('kfClr').onclick = () => edit(() => o.keys.splice(0));
+  document.querySelectorAll('[data-kt]').forEach((el) => (el.onchange = () => edit(() => (o.keys[+el.dataset.kt].t = Math.max(0, +el.value || 0)))));
+  document.querySelectorAll('[data-kv]').forEach((el) => (el.onchange = () => edit(() => (o.keys[+el.dataset.kv].v = clamp((+el.value || 0) / 100, 0, 4)))));
+  document.querySelectorAll('[data-kd]').forEach((el) => (el.onclick = () => edit(() => o.keys.splice(+el.dataset.kd, 1))));
+}
+const KF_HINT_CLIP = '타임라인에서 이 클립을 두 번 누르면 점이 생기고, 끌어서 옮기고, 점을 두 번 누르면 지워요. 점 사이는 직선으로 변해요 (페이드 인/아웃, 구간만 줄이기 등). 가운데 줄이 100%예요.';
+const KF_HINT_TRACK = '트랙 전체의 볼륨 자동화예요 (시간은 타임라인 기준). 타임라인에서 이 트랙 줄을 두 번 누르면 점이 생겨요.';
+function colorHtml(c) {
+  const col = c.color, sg = (v) => (v > 0 ? '+' : '') + Math.round(v * 100);
+  const sl = (id, label, min, max, step, v, f) => field(`${label} <b id="${id}V">${f(v)}</b>`, `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}">`);
+  return `<h2 class="sub">색 보정</h2>
+    <div class="row" style="margin-bottom:8px">${Object.keys(COLOR_PRESETS).map((k) => `<button data-cpreset="${k}">${k}</button>`).join('')}</div>
+    ${sl('cBr', '밝기', -0.5, 0.5, 0.01, col.brightness, sg)}
+    ${sl('cCo', '대비', 0.5, 2, 0.01, col.contrast, (v) => Math.round(v * 100) + '%')}
+    ${sl('cSa', '채도', 0, 3, 0.05, col.saturation, (v) => Math.round(v * 100) + '%')}
+    ${sl('cTe', '색온도 (← 차갑게 · 따뜻하게 →)', -1, 1, 0.05, col.temperature, sg)}
+    <div class="row"><button id="cAll">모든 영상 클립에 적용</button></div>
+    <p class="muted">미리보기 색은 내보낸 영상과 거의 같지만 아주 조금 다를 수 있어요.</p>`;
+}
+function bindColor(c) {
+  for (const [id, key, f] of [['cBr', 'brightness', (v) => (v > 0 ? '+' : '') + Math.round(v * 100)], ['cCo', 'contrast', (v) => Math.round(v * 100) + '%'],
+    ['cSa', 'saturation', (v) => Math.round(v * 100) + '%'], ['cTe', 'temperature', (v) => (v > 0 ? '+' : '') + Math.round(v * 100)]]) {
+    $(id).oninput = (e) => { begin(); c.color[key] = +e.target.value; $(id + 'V').textContent = f(c.color[key]); };
+    $(id).onchange = () => commit();
+  }
+  document.querySelectorAll('[data-cpreset]').forEach((b) => (b.onclick = () => edit(() => Object.assign(c.color, COLOR_PRESETS[b.dataset.cpreset]))));
+  $('cAll').onclick = () => edit(() => project.clips.filter((k) => (trackOf(k) || {}).kind === 'video').forEach((k) => Object.assign(k.color, c.color)));
+}
+
 // ---- 자막 속성
 const FONTS = ['Apple SD Gothic Neo', 'AppleMyungjo', 'Noto Sans KR', 'Nanum Gothic', 'Arial', 'Helvetica Neue', 'Arial Black', 'Impact'];
 const SUB_PRESETS = {
@@ -857,11 +985,13 @@ function renderInspector() {
   if (c) {
     const tr = trackOf(c), m = media[c.media] || { name: '?' }, isAudio = tr.kind === 'audio';
     box.innerHTML = `<h2>클립</h2><p><b>${escapeHtml(m.name)}</b><br><span class="muted">${escapeHtml(tr.name)} · ${fmt(c.start)} – ${fmt(end(c))} (${len(c).toFixed(2)}초)${c.link ? ' · 🔗 연결됨' : ''}</span></p>
+      ${speedHtml(c)}
       ${isAudio ? field('목소리', `<select id="iVoice">${voices.map((v) => `<option value="${v.name}" ${v.name === c.voice ? 'selected' : ''}>${v.label}</option>`).join('')}${aiOptions(c)}</select>`)
         + '<div id="aiBox"></div>'
         + (c.voice.startsWith('ai:') ? '' : field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`))
         + field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
-        : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>' + videoClipHtml(c)}
+        + kfHtml(c.vol_keys, '볼륨 키프레임', KF_HINT_CLIP)
+        : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>' + colorHtml(c) + videoClipHtml(c)}
       <div class="row" style="margin-top:10px"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link ? '<button id="iUnlink">연결 해제</button>' : ''}</div>
       ${result}`;
     if (isAudio && c.voice.startsWith('ai:')) aiCheck(c);
@@ -872,7 +1002,8 @@ function renderInspector() {
       $('iGain').oninput = (e) => { begin(); c.gain = +e.target.value; $('iGainV').textContent = Math.round(c.gain * 100) + '%'; };
       $('iGain').onchange = () => commit();
     }
-    if (!isAudio) bindVideoClip(c);
+    bindSpeed(c);
+    if (isAudio) bindKf(); else { bindColor(c); bindVideoClip(c); }
     $('iSplit').onclick = () => splitAt(playhead());
     $('iDel').onclick = () => deleteSelected();
     if (c.link) $('iUnlink').onclick = () => edit(() => [c, ...linked(c)].forEach((k) => (k.link = null)));
@@ -887,7 +1018,8 @@ function renderInspector() {
         ${t.voice ? '' : field(`보이스 나올 때 줄이기 <b id="tDuckV">${t.duck ? '-' + Math.round(15 * t.duck) + 'dB' : '끔'}</b>`, `<input type="range" id="tDuck" min="0" max="1" step="0.05" value="${t.duck}">`)}
         <label class="check">${n('level')} 크기 고르게</label>
         <label class="check">${n('gate')} 말 사이 잡음 줄이기</label>
-        <label class="check">${n('tone')} 톤 다듬기</label>` : `<label class="check">${n('mute')} 숨기기</label>`}
+        <label class="check">${n('tone')} 톤 다듬기</label>
+        ${kfHtml(t.vol_keys, '트랙 볼륨 키프레임', KF_HINT_TRACK)}` : `<label class="check">${n('mute')} 숨기기</label>`}
       <div class="row" style="margin-top:10px"><button id="tDel">트랙 지우기</button></div>${result}`;
     $('tName').onchange = (e) => edit(() => (t.name = e.target.value));
     for (const k of ['voice', 'level', 'gate', 'tone', 'mute']) if ($(k)) $(k).onchange = (e) => edit(() => (t[k] = e.target.checked));
@@ -896,6 +1028,7 @@ function renderInspector() {
     slide('tRoom', 'room', { id: 'tRoomV', fmt: (v) => Math.round(v * 100) + '%' });
     slide('tDuck', 'duck', { id: 'tDuckV', fmt: (v) => (v ? '-' + Math.round(15 * v) + 'dB' : '끔') });
     $('tDel').onclick = () => removeTrack(t.id);
+    if (t.kind === 'audio') bindKf();
   } else {
     box.innerHTML = `<h2>프로젝트</h2><p class="muted">길이 ${fmt(projectLength())} · 클립 ${project.clips.length}개</p>
       <p class="muted">클립을 누르면 목소리·볼륨을, 트랙 이름을 누르면 트랙 효과를 바꿀 수 있어요.</p>
@@ -962,7 +1095,7 @@ function draw() {
       g.fillStyle = '#ffffffaa'; const mid = y + h / 2 + 6, amp = (h - 16) / 2;
       const x0 = Math.max(0, -x + tlBox.scrollLeft - 210), x1 = Math.min(w, tlBox.scrollLeft + tlBox.clientWidth - x);
       for (let px = Math.floor(x0); px < x1; px++) {
-        const i = Math.floor((c.src_in + px / s) * pk.rate);
+        const i = Math.floor((c.src_in + (px / s) * c.speed) * pk.rate);
         const v = Math.min(1, (pk.peaks[i] || 0) * 1.3) * amp;
         g.fillRect(x + px, mid - v, 1, Math.max(1, v * 2));
       }
@@ -974,7 +1107,7 @@ function draw() {
       const tw = Math.min(c.transition_dur, len(c)) * s;
       g.fillStyle = '#ffffff55'; g.beginPath(); g.moveTo(x, y + h); g.lineTo(x + tw, y); g.lineTo(x + tw, y + h); g.closePath(); g.fill();
     }
-    const label = `${tr.kind === 'video' && c.layout === 'pip' ? '▣ PiP · ' : ''}${tr.kind === 'video' && c.transition && c.transition !== 'none' ? '⇄ ' : ''}${c.link ? '🔗 ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
+    const label = `${c.speed !== 1 ? '⏩' + (+c.speed).toFixed(2).replace(/\.?0+$/, '') + '× ' : ''}${tr.kind === 'video' && c.layout === 'pip' ? '▣ PiP · ' : ''}${tr.kind === 'video' && c.transition && c.transition !== 'none' ? '⇄ ' : ''}${c.link ? '🔗 ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
     g.fillText(label, x + 5, y + 13);
     g.restore();
     if (c.id === sel.clip || selLinks.has(c.id)) {
@@ -983,6 +1116,17 @@ function draw() {
     }
     g.globalAlpha = 1;
   }
+  // 볼륨 키프레임 선: 점이 있는 클립/트랙은 항상 연하게, 선택한 것은 점과 함께 진하게
+  const kso = kfOwner();
+  for (const c of project.clips) {
+    const r = rowOf[c.track];
+    if (r && r.track.kind === 'audio' && c.vol_keys.length && !(kso && kso.clip === c)) drawEnvelope(g, { keys: c.vol_keys, t0: c.start, tmax: len(c), y: r.y + 2, h: r.h - 5 }, false);
+  }
+  for (const t of project.tracks) {
+    const r = rowOf[t.id];
+    if (r && t.kind === 'audio' && t.vol_keys.length && !(kso && kso.track === t)) drawEnvelope(g, { keys: t.vol_keys, t0: 0, tmax: Infinity, y: r.y + 2, h: r.h - 5 }, false);
+  }
+  if (kso) drawEnvelope(g, kso, true);
   // 자막
   for (const q of project.subtitles) {
     const x = q.start * s, w = Math.max(3, (q.end - q.start) * s), y = sr.y + 4, h = sr.h - 9;
@@ -1008,6 +1152,37 @@ function draw() {
   g.strokeStyle = recording ? col('--rec') : col('--accent'); g.lineWidth = 2;
   g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke(); g.lineWidth = 1;
   g.fillStyle = g.strokeStyle; g.beginPath(); g.moveTo(px - 6, 0); g.lineTo(px + 6, 0); g.lineTo(px, 9); g.fill();
+}
+// ---- 볼륨 키프레임 (선택한 오디오 클립, 없으면 선택한 오디오 트랙)
+function kfOwner() {
+  const rs = rows(), c = clipById(sel.clip);
+  if (c) {
+    const r = rs.find((q) => q.track.id === c.track);
+    return r && r.track.kind === 'audio' ? { keys: c.vol_keys, t0: c.start, tmax: len(c), y: r.y + 2, h: r.h - 5, clip: c } : null;
+  }
+  const t = project.tracks.find((k) => k.id === sel.track), r = t && rs.find((q) => q.track.id === t.id);
+  return r && t.kind === 'audio' ? { keys: t.vol_keys, t0: 0, tmax: Infinity, y: r.y + 2, h: r.h - 5, track: t } : null;
+}
+const kfY = (o, v) => o.y + o.h * (1 - clamp(v, 0, 2) / 2);              // 가운데 = 100%, 위 = 200%, 아래 = 0
+const kfV = (o, py) => Math.round(clamp((1 - (py - o.y) / o.h) * 2, 0, 2) * 100) / 100;
+function kfDot(o, x, y) {
+  const s = pps();
+  return o.keys.find((k) => Math.hypot((o.t0 + k.t) * s - x, kfY(o, k.v) - y) <= 7) || null;
+}
+function drawEnvelope(g, o, strong) {
+  const s = pps(), ks = [...o.keys].sort((a, b) => a.t - b.t), inf = o.tmax === Infinity;
+  const x0 = o.t0 * s, x1 = inf ? canvas.clientWidth : (o.t0 + o.tmax) * s;
+  if (strong) {   // 100% 기준선
+    g.strokeStyle = '#ffffff44'; g.setLineDash([3, 4]); g.beginPath(); g.moveTo(x0, kfY(o, 1)); g.lineTo(x1, kfY(o, 1)); g.stroke(); g.setLineDash([]);
+  }
+  if (!ks.length) return;
+  g.strokeStyle = strong ? '#ffd166' : '#ffd16688'; g.lineWidth = strong ? 2 : 1.5;
+  g.beginPath(); g.moveTo(x0, kfY(o, envAt(ks, 0)));
+  for (const k of ks) if (k.t > 0 && (inf || k.t < o.tmax)) g.lineTo((o.t0 + k.t) * s, kfY(o, k.v));
+  g.lineTo(x1, kfY(o, envAt(ks, inf ? 1e9 : o.tmax))); g.stroke(); g.lineWidth = 1;
+  if (strong) for (const k of ks) {
+    g.fillStyle = '#ffd166'; g.strokeStyle = '#1b1b1e'; g.beginPath(); g.arc((o.t0 + k.t) * s, kfY(o, k.v), 4.5, 0, 7); g.fill(); g.stroke();
+  }
 }
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); }
 
@@ -1045,7 +1220,14 @@ function cueHit(x) {
   }
   return null;
 }
-canvas.addEventListener('dblclick', (e) => { const [x, y] = pos(e); if (inSubRow(y) && cueHit(x)) { const ta = $('cText'); if (ta) { ta.focus(); ta.select(); } } });
+canvas.addEventListener('dblclick', (e) => {
+  const [x, y] = pos(e);
+  if (inSubRow(y)) { if (cueHit(x)) { const ta = $('cText'); if (ta) { ta.focus(); ta.select(); } } return; }
+  const o = kfOwner(); if (!o) return;
+  const dot = kfDot(o, x, y);
+  if (dot) { edit(() => o.keys.splice(o.keys.indexOf(dot), 1)); return; }   // 점을 두 번 누르면 지움
+  if (y >= o.y && y <= o.y + o.h && x / pps() >= o.t0 && x / pps() <= o.t0 + o.tmax) kfAddAt(o, x / pps(), kfV(o, y));   // 빈 곳을 두 번 누르면 점 추가
+});
 canvas.addEventListener('pointerdown', (e) => {
   const [x, y] = pos(e);
   if (inSubRow(y)) {   // 자막 트랙
@@ -1057,6 +1239,12 @@ canvas.addEventListener('pointerdown', (e) => {
     const t0 = playhead(); if (!playing && !(t0 >= q.q.start && t0 < q.q.end)) seek(q.q.start);
     begin(); drag = { mode: q.mode, cue: q.q, x0: x, orig: { ...q.q }, moved: false };
     renderHeads(); renderInspector(); return;
+  }
+  const ko = kfOwner(), kd = ko && kfDot(ko, x, y);
+  if (kd) {   // 키프레임 점 끌기
+    canvas.setPointerCapture(e.pointerId); sel.cue = null; sel.subs = false;
+    begin(); drag = { mode: 'kf', o: ko, key: kd };
+    return;
   }
   sel.cue = null; sel.subs = false;
   const h = hit(x, y);
@@ -1074,10 +1262,18 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   const [x, y] = pos(e);
   if (!drag) {
+    const ko = kfOwner();
+    if (ko && !inSubRow(y) && kfDot(ko, x, y)) { canvas.style.cursor = 'grab'; return; }
     const h = inSubRow(y) ? cueHit(x) : hit(x, y);
     const hc = h && (h.c || h.q); canvas.style.cursor = hc ? (h.mode === 'move' ? 'grab' : 'ew-resize') : 'default'; return;
   }
   if (drag.mode === 'scrub') { seek(x / pps()); return; }
+  if (drag.mode === 'kf') {
+    const o = drag.o;
+    drag.key.t = Math.round(clamp(x / pps() - o.t0, 0, o.tmax === Infinity ? 1e5 : o.tmax) * 100) / 100;
+    drag.key.v = kfV(o, y);
+    return;
+  }
   if (drag.cue) {
     const q = drag.cue, o = drag.orig, dt = (x - drag.x0) / pps();
     const xs = [...snapTargets(new Set()), ...project.subtitles.filter((k) => k !== q).flatMap((k) => [k.start, k.end])];
@@ -1110,13 +1306,17 @@ canvas.addEventListener('pointermove', (e) => {
   } else if (drag.mode === 'left') {
     let ns = o0.start + dt; const [a, la] = snapTime(ns, xs); if (la !== null) { ns = a; snapLine = la; }
     let d = ns - o0.start;
-    for (const o of drag.orig) d = clamp(d, Math.max(-o.src_in, -o.start), len(o) - 0.05);
-    drag.group.forEach((k, i) => { k.src_in = drag.orig[i].src_in + d; k.start = drag.orig[i].start + d; });
+    for (const o of drag.orig) d = clamp(d, Math.max(-o.src_in / o.speed, -o.start), len(o) - 0.05);
+    drag.group.forEach((k, i) => {
+      const o = drag.orig[i];
+      k.src_in = o.src_in + d * o.speed; k.start = o.start + d;
+      if (o.vol_keys.length) k.vol_keys = shiftKeys(o.vol_keys, d);
+    });
   } else {
     let ne = end(o0) + dt; const [a, la] = snapTime(ne, xs); if (la !== null) { ne = a; snapLine = la; }
     let d = ne - end(o0);
-    for (const o of drag.orig) d = clamp(d, 0.05 - len(o), ((media[o.media] || {}).duration || o.src_out) - o.src_out);
-    drag.group.forEach((k, i) => (k.src_out = drag.orig[i].src_out + d));
+    for (const o of drag.orig) d = clamp(d, 0.05 - len(o), (((media[o.media] || {}).duration || o.src_out) - o.src_out) / o.speed);
+    drag.group.forEach((k, i) => (k.src_out = drag.orig[i].src_out + d * drag.orig[i].speed));
   }
 });
 canvas.addEventListener('pointerup', () => {
