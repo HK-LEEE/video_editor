@@ -361,3 +361,121 @@ def test_subtitle_ass_generation():
     ass = to_ass([Cue(id="a", start=0, end=1, text="a{b}\nc")], SubtitleStyle(bg_opacity=0.5, x=0.5, y=0.8), 1000, 500)
     assert "PlayResX: 1000" in ass and "\\pos(500,400)" in ass and "Style: Box," in ass
     assert "a(b)\\Nc" in ass and ass.count("Dialogue:") == 2
+
+
+# ---------------------------------------------------------------- 속도 · 볼륨 키프레임 · 색 보정
+
+def dominant_hz(a, s, e):
+    seg = a[int(s * SR):int(e * SR)]
+    spec = np.abs(np.fft.rfft(seg * np.hanning(seg.size)))
+    return float(np.argmax(spec) * SR / seg.size)
+
+
+def mix_audio(c, tmp, tracks_, clips):
+    r = c.post("/api/mix", json={"tracks": tracks_, "clips": clips})
+    assert r.status_code == 200, r.text
+    p = tmp / "mix_out.wav"; p.write_bytes(r.content)
+    return sf.read(p, dtype="float32")[0]
+
+
+@pytest.mark.parametrize("speed", [2.0, 0.5])
+def test_speed_changes_length_but_keeps_pitch(api, speed):
+    c, tmp = api
+    m = upload(c, make_video(tmp / "m.mp4", 4, tone=440))
+    clip = {"id": "m", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 4, "start": 1, "speed": speed}
+    a = mix_audio(c, tmp, tracks(), [clip])
+    assert a.size / SR == pytest.approx(1 + 4 / speed, abs=0.05)             # 길이 = 원본 / 속도
+    assert rms(a, 0.2, 0.8) < 1e-4 and rms(a, 1.5, 1.5 + 4 / speed - 1) > 0.03
+    assert dominant_hz(a, 1.5, 2.2) == pytest.approx(440, abs=15)             # 높이는 그대로
+
+
+def test_speed_export_video_length_and_speed_cut_range(api):
+    c, tmp = api
+    red = upload(c, make_video(tmp / "r.mp4", 4, "red", 500))
+    blue = upload(c, make_video(tmp / "b.mp4", 2, "blue", 900))
+    clips = [
+        {"id": "c1", "track": "v1", "media": red["id"], "src_in": 0, "src_out": 4, "start": 0, "speed": 2},      # 2초
+        {"id": "c2", "track": "v1", "media": blue["id"], "src_in": 0, "src_out": 1, "start": 2, "speed": 0.5},  # 2초
+        {"id": "a1", "track": "a1", "media": red["id"], "src_in": 0, "src_out": 4, "start": 0, "speed": 2},
+    ]
+    mp4 = export_to(c, tmp, {"tracks": tracks(), "clips": clips})
+    assert probe(mp4)["duration"] == pytest.approx(4.0, abs=0.15)
+    r, g, b = frame_rgb(mp4, 1.5); assert r > 150 and b < 80
+    r, g, b = frame_rgb(mp4, 3.5); assert b > 150 and r < 80
+    a = decode(mp4)
+    assert rms(a, 0.2, 1.8) > 0.03 and rms(a, 2.2, 3.8) < 0.003
+
+
+def test_speed_does_not_change_project_length_math_for_overlap(api):
+    c, tmp = api
+    m = upload(c, make_video(tmp / "m.mp4", 3, tone=440))
+    slow = {"id": "m", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 3, "start": 0, "speed": 0.5}
+    assert mix_audio(c, tmp, tracks(), [slow]).size / SR == pytest.approx(6.0, abs=0.05)
+    assert c.post("/api/mix", json={"tracks": tracks(), "clips": [{**slow, "speed": 9}]}).status_code == 422
+
+
+def test_clip_volume_keyframes_ramp(api):
+    c, tmp = api
+    m = upload(c, make_video(tmp / "m.mp4", 4, tone=440))
+    clip = {"id": "m", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 4, "start": 1}
+    flat = mix_audio(c, tmp, tracks(), [clip])
+    keyed = mix_audio(c, tmp, tracks(), [{**clip, "vol_keys": [{"t": 1.0, "v": 1.0}, {"t": 2.0, "v": 0.0}, {"t": 3.0, "v": 1.0}]}])
+    # 클립 시작 1.0초 뒤(=타임라인 2초)부터 2.0초 뒤까지 내려갔다가 다시 올라옴
+    assert rms(keyed, 1.1, 1.4) == pytest.approx(rms(flat, 1.1, 1.4), rel=0.05)           # 첫 점 앞은 첫 값 그대로
+    assert rms(keyed, 2.95, 3.05) < 0.1 * rms(flat, 2.95, 3.05)                            # 가운데 점에서 0
+    assert rms(keyed, 2.0, 2.2) == pytest.approx(rms(flat, 2.0, 2.2) * 0.8, rel=0.15)      # 직선으로 내려감
+    assert rms(keyed, 4.5, 4.9) == pytest.approx(rms(flat, 4.5, 4.9), rel=0.05)            # 마지막 점 뒤는 마지막 값
+
+
+def test_track_volume_keyframes_are_timeline_time(api):
+    c, tmp = api
+    m = upload(c, make_video(tmp / "m.mp4", 4, tone=440))
+    clip = {"id": "m", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 4, "start": 0}
+    flat = mix_audio(c, tmp, tracks(), [clip])
+    keyed = mix_audio(c, tmp, tracks(a1={"vol_keys": [{"t": 0, "v": 0.0}, {"t": 2, "v": 1.0}]}), [clip])  # 2초에 걸쳐 페이드 인
+    assert rms(keyed, 0.0, 0.1) < 0.1 * rms(flat, 0.0, 0.1)
+    assert rms(keyed, 2.5, 3.5) == pytest.approx(rms(flat, 2.5, 3.5), rel=0.05)
+    assert c.post("/api/mix", json={"tracks": tracks(a1={"vol_keys": [{"t": 0, "v": 9}]}), "clips": [clip]}).status_code == 422
+
+
+def test_unsorted_keyframes_are_sorted(api):
+    c, tmp = api
+    m = upload(c, make_video(tmp / "m.mp4", 3, tone=440))
+    clip = {"id": "m", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 3, "start": 0}
+    a = mix_audio(c, tmp, tracks(), [{**clip, "vol_keys": [{"t": 2, "v": 1.0}, {"t": 0, "v": 0.0}]}])
+    b = mix_audio(c, tmp, tracks(), [{**clip, "vol_keys": [{"t": 0, "v": 0.0}, {"t": 2, "v": 1.0}]}])
+    assert np.allclose(a, b)
+
+
+def test_color_correction_export(api):
+    c, tmp = api
+    gray = upload(c, make_video(tmp / "g.mp4", 2, "0x808080", 500))
+    red = upload(c, make_video(tmp / "r.mp4", 2, "0xc04040", 500))
+
+    def shot(media, **color):
+        clip = {"id": "c", "track": "v1", "media": media["id"], "src_in": 0, "src_out": 2, "start": 0, "color": color}
+        return frame_rgb(export_to(c, tmp, {"tracks": tracks(), "clips": [clip]}), 1.0)
+
+    base = shot(gray)
+    assert base.mean() == pytest.approx(128, abs=8)
+    assert shot(gray, brightness=0.2).mean() > base.mean() + 30                # 밝기 올림
+    assert shot(gray, brightness=-0.2).mean() < base.mean() - 30
+    warm, cool = shot(gray, temperature=1.0), shot(gray, temperature=-1.0)
+    assert warm[0] > warm[2] + 20 and cool[2] > cool[0] + 20                    # 따뜻하면 붉게, 차가우면 푸르게
+    assert shot(red, saturation=0.0).std() < 6                                   # 채도 0 = 흑백
+    assert shot(red, saturation=2.0)[0] - shot(red, saturation=2.0)[1] > shot(red)[0] - shot(red)[1]
+    light = upload(c, make_video(tmp / "l.mp4", 2, "0xb0b0b0", 500))
+    dark = upload(c, make_video(tmp / "d.mp4", 2, "0x505050", 500))
+    assert shot(light, contrast=1.5).mean() > shot(light).mean() + 15           # 대비: 밝은 쪽은 더 밝게
+    assert shot(dark, contrast=1.5).mean() < shot(dark).mean() - 15             #       어두운 쪽은 더 어둡게
+    assert c.post("/api/export", json={"tracks": tracks(), "clips": [{"id": "c", "track": "v1", "media": red["id"], "src_in": 0,
+                  "src_out": 2, "start": 0, "color": {"saturation": 9}}]}).status_code == 422
+
+
+def test_color_does_not_change_audio_mix_cache(api):
+    from video_editor.editor import Clip, Project, Track, project_key
+    base = Project(tracks=[Track(id="v1", kind="video")], clips=[Clip(id="c", track="v1", media="aa", src_in=0, src_out=1, start=0)])
+    colored = base.model_copy(deep=True); colored.clips[0].color.brightness = 0.3
+    fast = base.model_copy(deep=True); fast.clips[0].speed = 2
+    assert project_key(base) == project_key(colored)
+    assert project_key(base) != project_key(fast)

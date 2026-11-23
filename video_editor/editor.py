@@ -7,6 +7,9 @@
 - 오디오 트랙: 모두 섞입니다. 트랙마다 볼륨·음소거·솔로, 녹이기 효과, 덕킹이 있습니다.
 - 보이스 트랙(voice=True)의 소리가 나올 때 다른 트랙은 duck 만큼 줄어듭니다.
 - 영상 클립은 전환 효과(transition)를 가질 수 있고, layout="pip"이면 아래 영상 위에 작게 겹쳐 보입니다.
+- 클립은 속도(speed)를 가질 수 있습니다. 소리는 높이를 유지한 채 늘이고 줄이며, 타임라인에서 차지하는 길이는 (src_out - src_in) / speed 입니다.
+- 볼륨 키프레임(vol_keys)은 클립(클립 시작 기준 초)과 트랙(타임라인 기준 초)에 둘 수 있고, 점 사이는 직선으로 이어집니다.
+- 영상 클립은 색 보정(color: 밝기·대비·채도·색온도)을 가질 수 있습니다.
 - 자막은 프로젝트의 자막 트랙(subtitles)에 구간별로 들어가고 내보낼 때 영상에 입히거나 SRT로 내보냅니다.
 
 미리듣기(/api/mix)와 내보내기(/api/export)는 같은 render_audio를 씁니다.
@@ -187,6 +190,21 @@ def peaks(audio: np.ndarray) -> list[float]:
 
 # ================================================================ 프로젝트
 
+class VolKey(BaseModel):
+    t: float = Field(ge=0)                   # 클립 키프레임은 클립 시작부터, 트랙 키프레임은 타임라인 처음부터 초
+    v: float = Field(1.0, ge=0.0, le=4.0)    # 이 시점의 볼륨 배율
+
+
+class Color(BaseModel):
+    brightness: float = Field(0.0, ge=-1.0, le=1.0)
+    contrast: float = Field(1.0, ge=0.0, le=3.0)
+    saturation: float = Field(1.0, ge=0.0, le=3.0)
+    temperature: float = Field(0.0, ge=-1.0, le=1.0)   # -1 차갑게(푸르게) ~ +1 따뜻하게(붉게)
+
+    def is_neutral(self) -> bool:
+        return not self.brightness and self.contrast == 1 and self.saturation == 1 and not self.temperature
+
+
 class Track(BaseModel):
     id: str
     kind: Literal["video", "audio"]
@@ -200,6 +218,7 @@ class Track(BaseModel):
     gate: bool = False
     tone: bool = False
     duck: float = Field(0.0, ge=0.0, le=1.0)   # 보이스가 나올 때 이 트랙을 줄이는 정도
+    vol_keys: list[VolKey] = []                 # 트랙 볼륨 자동화 (타임라인 기준 초)
 
 
 class Clip(BaseModel):
@@ -213,6 +232,10 @@ class Clip(BaseModel):
     intensity: float = Field(1.0, ge=0.1, le=5.0)
     gain: float = Field(1.0, ge=0.0, le=4.0)
     link: str | None = None
+    speed: float = Field(1.0, ge=0.25, le=4.0)   # 재생 속도 (소리 높이는 유지)
+    vol_keys: list[VolKey] = []                  # 클립 볼륨 자동화 (클립 시작 기준 초)
+    # 영상 클립 전용: 색 보정
+    color: Color = Color()
     # 영상 클립 전용: 이 클립이 시작할 때 아래 화면에서 이 클립으로 넘어가는 효과
     transition: Literal[TRANSITIONS] = "none"
     transition_dur: float = Field(0.5, ge=0.1, le=3.0)
@@ -233,8 +256,31 @@ class Project(BaseModel):
     subtitle_lang: str = ""     # 비우면 모든 자막, 지정하면 그 언어(와 언어 없음) 자막만 입힘
 
 
+def clip_len(c: Clip) -> float:
+    """타임라인에서 클립이 차지하는 길이 (속도 반영)."""
+    return (c.src_out - c.src_in) / c.speed
+
+
 def project_length(p: Project) -> float:
-    return max([c.start + (c.src_out - c.src_in) for c in p.clips] + [0.0])
+    return max([c.start + clip_len(c) for c in p.clips] + [0.0])
+
+
+def stretch(x: np.ndarray, speed: float) -> np.ndarray:
+    """높이는 그대로 두고 speed배 빠르게(>1) 또는 느리게(<1). 길이는 정확히 len/speed로 맞춥니다."""
+    if abs(speed - 1.0) < 1e-6 or x.size < 2:
+        return x
+    y = pb.time_stretch(x.astype(np.float32), SR, stretch_factor=float(speed))
+    y = np.asarray(y, dtype=np.float32).reshape(-1)
+    want = int(round(x.size / speed))
+    return np.pad(y, (0, max(0, want - y.size)))[:want]
+
+
+def gain_envelope(keys: list[VolKey], n: int, t0: float = 0.0) -> np.ndarray:
+    """키프레임 사이를 직선으로 이은 볼륨 배율 (첫/끝 점 바깥은 그 값 그대로). 키가 없으면 1."""
+    if not keys:
+        return np.ones(n, dtype=np.float32)
+    ks = sorted(keys, key=lambda k: k.t)
+    return np.interp(t0 + np.arange(n) / SR, [k.t for k in ks], [k.v for k in ks]).astype(np.float32)
 
 
 def _fade(x: np.ndarray, n: int = int(SR * 0.008)) -> np.ndarray:
@@ -310,12 +356,16 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
             if c.track != t.id or c.src_out <= c.src_in:
                 continue
             a = clip_audio(ws, c.media, c.voice, c.intensity)
-            seg = a[int(c.src_in * SR): int(c.src_out * SR)].copy()
+            seg = stretch(a[int(c.src_in * SR): int(c.src_out * SR)].copy(), c.speed)
             at = int(round(c.start * SR))
+            if c.vol_keys:
+                seg = seg * gain_envelope(c.vol_keys, seg.size)
             seg = seg[: max(0, n - at)]
             if seg.size:
                 bus[at: at + seg.size] += _fade(seg) * c.gain
         buses[t.id] = track_fx(bus, t) * t.volume
+        if t.vol_keys:
+            buses[t.id] *= gain_envelope(t.vol_keys, n)
 
     voice_key = sum((buses[t.id] for t in audio_tracks if t.voice and t.id in buses), np.zeros(n, np.float32))
     talking = None
@@ -334,7 +384,7 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     return peak_limit(mix, SR)
 
 
-VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border"}
+VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border", "color"}
 
 
 def project_key(p: Project, ws: Workspace | None = None) -> str:
@@ -377,6 +427,19 @@ def _f(x: float) -> str:
     return f"{x:.4f}"
 
 
+TEMP_GAIN = 0.2   # 색온도 ±1일 때 빨강·파랑을 ±20% 키우고 줄입니다 (미리보기도 같은 값)
+
+
+def color_filters(col: Color) -> list[str]:
+    """색 보정 ffmpeg 필터. 밝기는 더하기, 대비는 중간 회색 기준, 색온도는 빨강/파랑 균형입니다."""
+    out = []
+    if col.brightness or col.contrast != 1 or col.saturation != 1:
+        out.append(f"eq=brightness={col.brightness:.4f}:contrast={col.contrast:.4f}:saturation={col.saturation:.4f}")
+    if col.temperature:
+        out.append(f"colorchannelmixer=rr={1 + TEMP_GAIN * col.temperature:.4f}:bb={1 - TEMP_GAIN * col.temperature:.4f}")
+    return out
+
+
 def video_layers(ws: Workspace, p: Project) -> list[Clip]:
     """아래에서 위로 그릴 순서의 영상 클립."""
     rank = {t.id: i for i, t in enumerate(p.tracks) if t.kind == "video" and not t.mute}
@@ -388,10 +451,10 @@ def _tail_extension(p: Project, c: Clip, layers: list[Clip]) -> float:
     """같은 트랙에서 바로 이어 붙은 다음 클립이 전환 효과를 가지면, 이 클립 끝을 그만큼 늘려 겹쳐 줍니다."""
     if c.layout != "full":
         return 0.0
-    e = c.start + c.src_out - c.src_in
+    e = c.start + clip_len(c)
     nxt = [k for k in layers if k.track == c.track and k.layout == "full" and k.transition != "none"
            and abs(k.start - e) <= 0.05]
-    return max((min(k.transition_dur, k.src_out - k.src_in) for k in nxt), default=0.0)
+    return max((min(k.transition_dur, clip_len(k)) for k in nxt), default=0.0)
 
 
 def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) -> tuple[list[str], str]:
@@ -417,16 +480,17 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         m = ws.meta(c.media)
         if c.layout == "pip" and m["kind"] == "audio":
             continue
-        dur = c.src_out - c.src_in
+        dur = clip_len(c)           # 타임라인에서의 길이 (속도 반영)
         ext = _tail_extension(p, c, layers)
-        real = min(ext, max(0.0, m["duration"] - c.src_out)) if m["kind"] != "audio" else ext
+        real = min(ext, max(0.0, (m["duration"] - c.src_out) / c.speed)) if m["kind"] != "audio" else ext
         k, n_in = n_in, n_in + 1
-        inputs += ["-ss", f"{c.src_in:.4f}", "-t", _f(dur + real)]
+        inputs += ["-ss", f"{c.src_in:.4f}", "-t", _f((dur + real) * c.speed)]   # 원본에서 읽는 길이
         if m["kind"] == "audio":  # 영상 트랙에 소리 파일만 있으면 검은 화면
             inputs += ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={FPS}"]
         else:
             inputs += ["-i", str(ws.media_file(c.media))]
-        chain = [f"trim=duration={_f(dur + real)}", "setpts=PTS-STARTPTS", f"fps={FPS}"]
+        chain = [f"trim=duration={_f((dur + real) * c.speed)}", f"setpts=(PTS-STARTPTS)/{c.speed:.6f}", f"fps={FPS}"]
+        chain += color_filters(c.color)
         if c.layout == "pip":
             pw = max(16, int(W * c.pip_w) // 2 * 2)
             chain.append(f"scale={pw}:-2")
