@@ -40,6 +40,17 @@ _ID_OK = re.compile(r"^[0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-]{1,48}$")
 _lock = threading.RLock()
 
 
+HISTORY_DIR = "timeline_history"
+HISTORY_KEEP = 20      # 타임라인 이전 버전을 몇 개까지 둘지
+HISTORY_GAP = 90       # 초 — 이 간격보다 촘촘하게는 스냅샷을 새로 만들지 않음 (클립이 확 줄 때는 예외)
+_HIST_RE = re.compile(r"^(\d{15})_(\d+)\.json$")
+
+
+def _clip_count(d) -> int:
+    c = (d.get("project") or {}).get("clips") if isinstance(d, dict) and isinstance(d.get("project"), dict) else None
+    return len(c) if isinstance(c, list) else 0
+
+
 def _write_json(p: Path, data) -> None:
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -262,10 +273,71 @@ class Projects:
         d = _read_json(self.dir(pid) / "timeline.json", None)
         return d if isinstance(d, dict) else None
 
-    def save_timeline(self, pid: str, data: dict) -> None:
+    def save_timeline(self, pid: str, data: dict, allow_empty: bool = False) -> None:
+        """편집 상태를 저장합니다. 클립이 있던 파일을 클립 0개로 덮어쓰는 건 사용자가 확인했을 때(allow_empty)만 받아요.
+        덮어쓰기 직전의 이전 내용은 timeline_history/ 에 최근 HISTORY_KEEP개까지 돌려가며 남겨 둡니다."""
+        path = self.dir(pid) / "timeline.json"
         with _lock:
-            _write_json(self.dir(pid) / "timeline.json", data)
+            old = _read_json(path, None) if path.exists() else None
+            old_n, new_n = _clip_count(old), _clip_count(data)
+            if old_n > 0 and new_n == 0 and not allow_empty:
+                raise HTTPException(409, f"클립 {old_n}개가 있던 프로젝트를 빈 타임라인으로 저장하려고 해서 막았어요. 의도한 게 아니라면 '이전 버전'에서 되돌릴 수 있어요.")
+            if isinstance(old, dict):
+                self._snapshot(pid, old, old_n, new_n)
+            _write_json(path, data)
         self.touch(pid)
+
+    # ---- 타임라인 이전 버전 (자동 스냅샷)
+    def _hist_dir(self, pid: str) -> Path:
+        return self.dir(pid) / HISTORY_DIR
+
+    def _snapshot(self, pid: str, old: dict, old_n: int, new_n: int, force: bool = False) -> None:
+        d = self._hist_dir(pid)
+        files = sorted(d.glob("*.json")) if d.exists() else []
+        last = files[-1] if files else None
+        shrink = old_n > 0 and (new_n == 0 or new_n <= old_n * 0.5)   # 클립이 확 줄어드는 저장 직전은 꼭 남김
+        if not (force or shrink or last is None or time.time() - last.stat().st_mtime >= HISTORY_GAP):
+            return
+        if last is not None and _read_json(last, None) == old:
+            return
+        d.mkdir(parents=True, exist_ok=True)
+        name = f"{int(time.time() * 1000):015d}_{old_n}.json"
+        _write_json(d / name, old)
+        for f in sorted(d.glob("*.json"))[:-HISTORY_KEEP]:
+            f.unlink(missing_ok=True)
+
+    def timeline_history(self, pid: str) -> list[dict]:
+        d = self._hist_dir(pid); out = []
+        for f in sorted(d.glob("*.json"), reverse=True) if d.exists() else []:
+            m = _HIST_RE.match(f.name)
+            if not m:
+                continue
+            data = _read_json(f, {})
+            clips = (data.get("project") or {}).get("clips") if isinstance(data, dict) else None
+            length = max([(c.get("start", 0) or 0) + ((c.get("src_out", 0) or 0) - (c.get("src_in", 0) or 0)) / (c.get("speed") or 1)
+                          for c in clips if isinstance(c, dict)] or [0]) if isinstance(clips, list) else 0
+            out.append({"name": f.name, "ts": int(m.group(1)) / 1000, "clips": int(m.group(2)), "length": round(length, 2), "bytes": f.stat().st_size})
+        return out
+
+    def timeline_version(self, pid: str, name: str) -> dict:
+        if not _HIST_RE.match(name):
+            raise HTTPException(400, "버전 이름이 올바르지 않아요.")
+        d = _read_json(self._hist_dir(pid) / name, None)
+        if not isinstance(d, dict):
+            raise HTTPException(404, "그 버전을 찾을 수 없어요.")
+        return d
+
+    def restore_timeline(self, pid: str, name: str) -> dict:
+        """고른 이전 버전으로 되돌려요. 지금 내용은 먼저 스냅샷으로 남겨서 되돌리기를 되돌릴 수도 있어요."""
+        snap = self.timeline_version(pid, name)
+        path = self.dir(pid) / "timeline.json"
+        with _lock:
+            cur = _read_json(path, None) if path.exists() else None
+            if isinstance(cur, dict) and cur != snap:
+                self._snapshot(pid, cur, _clip_count(cur), _clip_count(snap), force=True)
+            _write_json(path, snap)
+        self.touch(pid)
+        return snap
 
 
 # ================================================================ 예전 구조에서 옮기기

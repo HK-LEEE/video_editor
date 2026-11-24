@@ -141,8 +141,31 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         pr.info(pid)
         if not isinstance(b.get("project"), dict):
             raise HTTPException(400, "편집 상태 모양이 올바르지 않아요.")
-        pr.save_timeline(pid, {"project": b["project"], "ui": b.get("ui") if isinstance(b.get("ui"), dict) else {}})
+        pr.save_timeline(pid, {"project": b["project"], "ui": b.get("ui") if isinstance(b.get("ui"), dict) else {}},
+                         allow_empty=bool(b.get("allow_empty")))
         return {"ok": True}
+
+    @router.get("/workspace/timeline/history")
+    def timeline_history(project: str = "", space: str = ""):
+        """타임라인 이전 버전 목록 (최근 것부터). 저장할 때마다 자동으로 쌓여요."""
+        pr = sp.projects(space) if space else ws.projects
+        pid = project or here(space, pr)
+        pr.info(pid)
+        return {"versions": pr.timeline_history(pid)}
+
+    @router.get("/workspace/timeline/history/{name}")
+    def timeline_version(name: str, project: str = "", space: str = ""):
+        pr = sp.projects(space) if space else ws.projects
+        pid = project or here(space, pr)
+        pr.info(pid)
+        return pr.timeline_version(pid, name)
+
+    @router.post("/workspace/timeline/restore")
+    def timeline_restore(b: dict, project: str = "", space: str = ""):
+        pr = sp.projects(space) if space else ws.projects
+        pid = project or here(space, pr)
+        pr.info(pid)
+        return pr.restore_timeline(pid, str(b.get("name", "")))
 
 
 def add_page_routes(app: FastAPI, ws: Workspace, html_path: Path) -> None:

@@ -398,6 +398,7 @@ class Clip(BaseModel):
     pip_w: float = Field(0.3, ge=0.05, le=1.0)
     pip_opacity: float = Field(1.0, ge=0.1, le=1.0)
     pip_border: bool = True
+    disabled: bool = False   # 클립 끄기: 타임라인에는 남지만 소리·화면·길이에 넣지 않음
     tpl: str = ""            # 템플릿이 넣은 클립의 표시 (intro·outro·ending). 다시 적용할 때 먼저 지웁니다
 
 
@@ -416,7 +417,7 @@ def clip_len(c: Clip) -> float:
 
 
 def project_length(p: Project) -> float:
-    return max([c.start + clip_len(c) for c in p.clips] + [0.0])
+    return max([c.start + clip_len(c) for c in p.clips if not c.disabled] + [0.0])
 
 
 def stretch(x: np.ndarray, speed: float) -> np.ndarray:
@@ -507,7 +508,7 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
             continue
         bus = np.zeros(n, dtype=np.float32)
         for c in p.clips:
-            if c.track != t.id or c.src_out <= c.src_in:
+            if c.track != t.id or c.src_out <= c.src_in or c.disabled:
                 continue
             a = clip_audio(ws, c.media, c.voice, c.intensity)
             seg = stretch(a[int(c.src_in * SR): int(c.src_out * SR)].copy(), c.speed)
@@ -609,7 +610,7 @@ def color_filters(col: Color) -> list[str]:
 def video_layers(ws: Workspace, p: Project) -> list[Clip]:
     """아래에서 위로 그릴 순서의 영상 클립."""
     rank = {t.id: i for i, t in enumerate(p.tracks) if t.kind == "video" and not t.mute}
-    clips = [c for c in p.clips if c.track in rank and c.src_out > c.src_in]
+    clips = [c for c in p.clips if c.track in rank and c.src_out > c.src_in and not c.disabled]
     return sorted(clips, key=lambda c: (c.layout == "pip", rank[c.track], c.start))
 
 

@@ -670,6 +670,7 @@ const MIX_IGNORE = ['transition', 'transition_dur', 'tail_hold', 'layout', 'pip_
 // 예전에 저장된 프로젝트나 새로 만든 클립에 빠진 항목을 채웁니다
 function normalize(p) {
   p.subtitles ||= []; p.subtitle_lang ||= ''; p.overlays ||= [];
+  p.markers = (Array.isArray(p.markers) ? p.markers : []).filter((m) => m && Number.isFinite(m.t)).map((m) => ({ id: m.id || uid(), t: m.t, label: m.label || '', color: m.color || '' }));
   for (const q of p.subtitles) { q.words ||= []; q.emotion ||= ''; }
   p.subtitle_style = { ...SUB_DEFAULTS, ...(p.subtitle_style || {}) };
   for (const t of p.tracks) { t.vol_keys ||= []; t.vol_keys.sort((a, b) => a.t - b.t); }
@@ -690,9 +691,9 @@ function defaultProject() {
 }
 let project = defaultProject();
 let ui = { zoom: 60, latency: 0, monitor: false, snap: true, armed: null,
-  guides: true, rowScale: 1, th: {}, lock: {}, ws: 'edit', binW: 236, dockW: 300, tlH: 280, binOpen: true, dockOpen: true };
+  guides: true, rowScale: 1, th: {}, lock: {}, follow: true, magnetic: false, placeMode: 'free', inout: { in: null, out: null }, ws: 'edit', binW: 236, dockW: 300, tlH: 280, binOpen: true, dockOpen: true };
 let media = {};                 // id -> meta (서버 보관함)
-let sel = { clip: null, track: null, cue: null, subs: false, ov: null };
+let sel = { clip: null, track: null, cue: null, subs: false, ov: null, multi: new Set() };
 try {
   // 이 브라우저에 저장된 것 → (예전에 쓰던 하나뿐인 저장분: '기존 작업'만) → 서버의 프로젝트 파일(timeline.json) 순서
   let raw = null;
@@ -701,10 +702,13 @@ try {
     if (raw === null && WSI.legacy2) raw = localStorage.getItem(STORE_V2);          // 프로젝트만 있던 때의 저장분 ('기본 워크스페이스'가 이어받음)
     if (raw === null && WSI.legacy2 && WSI.legacy) raw = localStorage.getItem(LEGACY_STORE);
   } catch {}
-  const saved = raw ? JSON.parse(raw) : WSI.timeline;
+  let saved = raw ? JSON.parse(raw) : WSI.timeline;
+  // 안전장치: 이 브라우저의 저장분이 빈 타임라인인데 서버 파일에는 클립이 있으면, 서버 쪽을 믿고 불러옵니다 (조용히 비워지는 사고 방지)
+  const nClips = (x) => (x && x.project && Array.isArray(x.project.clips) ? x.project.clips.length : 0);
+  if (raw && nClips(saved) === 0 && nClips(WSI.timeline) > 0) { saved = WSI.timeline; window.__bootNote = '이 브라우저의 저장분이 비어 있어서 서버에 저장된 타임라인을 불러왔어요.'; }
   if (saved && saved.project) { project = normalize(saved.project); ui = { ...ui, ...saved.ui }; }
 } catch {}
-let srvTimer = null, saveVer = 0, savedVer = 0, saveFail = false;
+let srvTimer = null, saveVer = 0, savedVer = 0, saveFail = false, allowEmpty = false;
 const timelineUrl = () => '/api/workspace/timeline?' + (WSI.space ? 'space=' + encodeURIComponent(WSI.space) + '&' : '') + 'project=' + encodeURIComponent(WSI.id);
 function setSaveSt(text, err) { const el = document.getElementById('saveSt'); if (el) { el.textContent = text; el.classList.toggle('err', !!err); } }
 const hhmm = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -713,9 +717,14 @@ async function pushServer(keepalive = false) {
   clearTimeout(srvTimer); srvTimer = null;
   const ver = saveVer; setSaveSt('저장 중…');
   try {
-    const r = await fetch(timelineUrl(), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, ui }), keepalive });
+    const r = await fetch(timelineUrl(), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, ui, allow_empty: allowEmpty && project.clips.length === 0 }), keepalive });
+    if (r.status === 409) {   // 서버가 '클립이 있던 프로젝트를 빈 타임라인으로 덮어쓰기'를 막았어요 → 다시 보내지 않고 알려 줍니다
+      saveFail = true; setSaveSt('⚠ 빈 타임라인 저장을 서버가 막았어요 — 눌러서 이전 버전 보기', true);
+      status('클립이 모두 사라진 상태는 서버에 저장하지 않았어요. 저장 표시를 눌러 이전 버전에서 되돌릴 수 있어요.', true);
+      window.dispatchEvent(new Event('editor:save-blocked')); return false;
+    }
     if (!r.ok) throw new Error(r.status);
-    savedVer = Math.max(savedVer, ver); saveFail = false;
+    savedVer = Math.max(savedVer, ver); saveFail = false; allowEmpty = false;
     if (savedVer === saveVer && !srvTimer) setSaveSt('✓ 저장됨 ' + hhmm());
     return true;
   } catch (e) {
@@ -750,21 +759,32 @@ const cueById = (id) => project.subtitles.find((c) => c.id === id);
 const ovById = (id) => (project.overlays || []).find((o) => o.id === id);
 const len = (c) => (c.src_out - c.src_in) / (c.speed || 1);   // 타임라인에서 차지하는 길이 (속도 반영)
 const end = (c) => c.start + len(c);
-const projectLength = () => Math.max(0, ...project.clips.map(end));
+const projectLength = () => Math.max(0, ...project.clips.filter((c) => !c.disabled).map(end));
 const linked = (c) => (c && c.link ? project.clips.filter((k) => k.link === c.link && k !== c) : []);
+// 여러 클립 선택: sel.clip(대표) + sel.multi(함께 고른 것들). 대표가 multi 안에 있을 때만 multi가 유효해서, 다른 걸 고르면 저절로 풀려요.
+const selIds = () => {
+  if (!sel.clip || !clipById(sel.clip)) return new Set();
+  if (!sel.multi || sel.multi.size < 2 || !sel.multi.has(sel.clip)) return new Set([sel.clip]);
+  return new Set([...sel.multi].filter((id) => clipById(id)));
+};
 const armedTrack = () => project.tracks.find((t) => t.id === ui.armed && t.kind === 'audio')
   || project.tracks.find((t) => t.kind === 'audio' && t.voice) || project.tracks.find((t) => t.kind === 'audio');
 
 // ================================================================ 실행 취소
-let undo = [], redo = [], pending = null;
+let undo = [], redo = [], pending = null, pendingN = 0, holdN = 0;
 const snap = () => JSON.stringify(project);
-function begin() { if (pending === null) pending = snap(); }
+function begin() { if (pending === null) { pending = snap(); pendingN = project.clips.length; } }
 function commit() {
-  if (pending === null) return;
+  if (pending === null || holdN > 0) return;
+  if (pending !== snap() && pendingN > 0 && project.clips.length === 0) {   // 안전장치: 이 편집으로 클립이 전부 사라지면 한 번 더 확인
+    if (!confirm(`이 편집으로 타임라인의 클립 ${pendingN}개가 모두 사라져요. 계속할까요?\n\n(취소하면 편집 전으로 되돌려요. 계속해도 ⌘Z 또는 '이전 버전'으로 되살릴 수 있어요.)`)) { const back = pending; pending = null; restore(back); return; }
+    allowEmpty = true;
+  }
   if (pending !== snap()) { undo.push(pending); if (undo.length > 200) undo.shift(); redo = []; }
   pending = null; afterChange();
 }
 function edit(fn) { begin(); fn(); commit(); }
+function batch(fn) { begin(); holdN++; try { fn(); } finally { holdN--; } commit(); }   // 여러 단계를 실행 취소 한 번으로 묶어요
 function restore(json) {
   project = normalize(JSON.parse(json));
   if (sel.clip && !clipById(sel.clip)) sel.clip = null;
@@ -773,8 +793,10 @@ function restore(json) {
   if (sel.track && !project.tracks.find((t) => t.id === sel.track)) sel.track = null;
   afterChange();
 }
-function doUndo() { if (!undo.length) return; redo.push(snap()); restore(undo.pop()); }
-function doRedo() { if (!redo.length) return; undo.push(snap()); restore(redo.pop()); }
+function emptiesTo(json) { try { return project.clips.length > 0 && JSON.parse(json).clips.length === 0; } catch { return false; } }
+function guardEmpty(json) { if (!emptiesTo(json)) return true; if (!confirm('이 단계로 가면 타임라인이 완전히 비어요. 계속할까요?')) return false; allowEmpty = true; return true; }
+function doUndo() { if (!undo.length || !guardEmpty(undo[undo.length - 1])) return; redo.push(snap()); restore(undo.pop()); }
+function doRedo() { if (!redo.length || !guardEmpty(redo[redo.length - 1])) return; undo.push(snap()); restore(redo.pop()); }
 function afterChange() {
   normalize(project); save(); renderHeads(); renderInspector(); layout(); refreshMix();
   if (aiTxt && $('aiDlg').classList.contains('on')) renderTxt();
@@ -788,9 +810,9 @@ async function loadMedia() {
   const list = await (await fetch('/api/media')).json();
   media = Object.fromEntries(list.map((m) => [m.id, m]));
   // 보관함에서 사라진 파일을 쓰는 클립은 정리
-  const before = project.clips.length;
-  project.clips = project.clips.filter((c) => media[c.media]);
-  if (project.clips.length !== before) save();
+  const before = project.clips.length, kept = project.clips.filter((c) => media[c.media]);
+  if (before > 0 && kept.length === 0) status('⚠ 보관함에서 클립의 파일을 모두 찾지 못했어요. 클립은 지우지 않고 그대로 뒀어요. 프로젝트·보관함을 확인해 주세요.', true);   // 한꺼번에 비워지지 않게
+  else if (kept.length !== before) { project.clips = kept; save(); }
   renderBin(); afterChange();
 }
 const icon = (m) => (m.kind === 'video' ? [ICON('film'), '#4b3f9a'] : m.recorded ? [ICON('mic'), '#8a4f16'] : [ICON('wave'), '#1f6b50']);
@@ -936,7 +958,7 @@ const playhead = () => (playing ? playing.t0 + (actx().currentTime - playing.c0)
 const projectBody = () => ({ tracks: project.tracks, clips: project.clips, subtitles: project.subtitles,
   subtitle_style: project.subtitle_style, subtitle_lang: project.subtitle_lang, overlays: project.overlays });
 // 소리 믹스에는 자막·전환·PiP가 영향이 없으니 빼서, 그걸 바꿔도 미리듣기를 다시 만들지 않게 합니다
-const mixBody = () => ({ tracks: project.tracks, clips: project.clips.map((c) => { const o = { ...c }; for (const k of MIX_IGNORE) delete o[k]; return o; }) });
+const mixBody = () => ({ tracks: project.tracks, clips: project.clips.filter((c) => !c.disabled).map((c) => { const o = { ...c }; for (const k of MIX_IGNORE) delete o[k]; return o; }) });
 const mixes = new Map();
 function ensureMix() {
   const key = JSON.stringify(mixBody());
@@ -1053,7 +1075,7 @@ function videoEl(key, mid) {
 function videoLayers() {   // 아래 → 위 순서
   const rank = {};
   project.tracks.filter((t) => t.kind === 'video' && !t.mute).forEach((t, i) => (rank[t.id] = i));
-  return project.clips.filter((c) => c.track in rank && len(c) > 0 && media[c.media] && media[c.media].has_video)
+  return project.clips.filter((c) => !c.disabled && c.track in rank && len(c) > 0 && media[c.media] && media[c.media].has_video)
     .sort((a, b) => (a.layout === 'pip') - (b.layout === 'pip') || rank[a.track] - rank[b.track] || a.start - b.start);
 }
 // 바로 이어 붙은 다음 클립이 전환 효과를 가지면 이 클립 끝을 그만큼 늘려 겹칩니다 (서버와 같은 규칙)
@@ -1275,12 +1297,12 @@ async function toggleRecord() {
 let lastVoice = { voice: 'original', intensity: 1 };
 
 // ================================================================ 편집 동작
-function splitAt(t) {
+function splitAt(t, all = false) {
   if (sel.cue) return splitCue(t);
   if (sel.ov) return splitOv(t);
-  let targets = sel.clip ? [clipById(sel.clip)].filter((c) => c && c.start + 0.02 < t && t < end(c) - 0.02) : [];
-  if (!targets.length) targets = project.clips.filter((c) => c.start + 0.02 < t && t < end(c) - 0.02 && !isLocked(trackOf(c)));
-  else targets = [...targets, ...linked(targets[0]).filter((c) => c.start + 0.02 < t && t < end(c) - 0.02)];
+  const crosses = (c) => c.start + 0.02 < t && t < end(c) - 0.02;
+  let targets = selectedGroup().filter(crosses);
+  if (!targets.length || all) targets = project.clips.filter((c) => crosses(c) && !isLocked(trackOf(c)));
   if (!targets.length) { status('재생 위치에 자를 클립이 없어요.', true); return; }
   edit(() => { splitTargets(targets, t); });
 }
@@ -1298,6 +1320,7 @@ function splitTargets(targets, t) {
     }
     c.src_out = cut;
     project.clips.push(right); made.push(right);
+    if (sel.multi && sel.multi.has(c.id)) sel.multi.add(right.id);
     if (c.id === sel.clip) sel.clip = right.id;
   }
   return made;
@@ -1305,13 +1328,13 @@ function splitTargets(targets, t) {
 function deleteSelected(withLinks = true) {
   if (sel.cue) return deleteCue();
   if (sel.ov) return deleteOv();
-  const c = clipById(sel.clip); if (!c) return;
-  const gone = new Set([c.id, ...(withLinks ? linked(c).map((k) => k.id) : [])]);
-  edit(() => { project.clips = project.clips.filter((k) => !gone.has(k.id)); sel.clip = null; });
+  const ids = selIds(); if (!ids.size) return;
+  const gone = new Set();
+  for (const id of ids) { const c = clipById(id); gone.add(id); if (withLinks) linked(c).forEach((k) => gone.add(k.id)); }
+  edit(() => { project.clips = project.clips.filter((k) => !gone.has(k.id)); sel.clip = null; sel.multi = new Set(); });
 }
 function nudge(dt) {
-  const c = clipById(sel.clip); if (!c) { status('먼저 옮길 클립을 고르세요.', true); return; }
-  const group = [c, ...linked(c)];
+  const group = selectedGroup(); if (!group.length) { status('먼저 옮길 클립을 고르세요.', true); return; }
   const d = Math.max(dt, -Math.min(...group.map((k) => k.start)));
   edit(() => group.forEach((k) => (k.start += d)));
 }
@@ -2021,6 +2044,7 @@ window.addEventListener('resize', layout);
 const CSS = getComputedStyle(document.documentElement);
 const col = (v) => CSS.getPropertyValue(v).trim();
 let ghost = null, snapLine = null, dragMedia = null;
+const drawHooks = [], menuHooks = {};
 
 function draw() {
   const g = canvas.getContext('2d'), W = canvas.clientWidth, H = canvas.clientHeight, s = pps();
@@ -2070,12 +2094,12 @@ function draw() {
   });
   // 클립
   const rowOf = Object.fromEntries(rs.map((r) => [r.track.id, r]));
-  const selC = clipById(sel.clip), selLinks = new Set(linked(selC).map((k) => k.id));
+  const selC = clipById(sel.clip), selLinks = new Set(linked(selC).map((k) => k.id)), selSet = selIds(), selMany = selSet.size > 1;
   for (const c of project.clips) {
     const r = rowOf[c.track]; if (!r) continue;
     const x = c.start * s, w = Math.max(2, len(c) * s), y = r.y + 2, h = r.h - 5, tr = r.track;
     const base = c.tpl ? '#a21caf' : tr.kind === 'video' ? col('--vclip') : tr.voice ? col('--voiceclip') : col('--aclip');
-    const dim = tr.mute || (tr.kind === 'audio' && project.tracks.some((k) => k.solo) && !tr.solo);
+    const dim = tr.mute || c.disabled || (tr.kind === 'audio' && project.tracks.some((k) => k.solo) && !tr.solo);
     g.globalAlpha = dim ? 0.35 : 1;
     g.fillStyle = base + 'aa'; roundRect(g, x, y, w, h, 4); g.fill();
     const pk = tr.kind === 'audio' ? peaksCache.get(peakKey(c)) : null;
@@ -2096,12 +2120,12 @@ function draw() {
       const tw = Math.min(c.transition_dur, len(c)) * s;
       g.fillStyle = '#ffffff55'; g.beginPath(); g.moveTo(x, y + h); g.lineTo(x + tw, y); g.lineTo(x + tw, y + h); g.closePath(); g.fill();
     }
-    const label = `${TPL_TAG[c.tpl] || ''}${c.speed !== 1 ? '⏩' + (+c.speed).toFixed(2).replace(/\.?0+$/, '') + '× ' : ''}${tr.kind === 'video' && c.layout === 'pip' ? '▣ PiP · ' : ''}${tr.kind === 'video' && c.transition && c.transition !== 'none' ? '⇄ ' : ''}${c.link ? '🔗 ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
+    const label = `${TPL_TAG[c.tpl] || ''}${c.speed !== 1 ? '⏩' + (+c.speed).toFixed(2).replace(/\.?0+$/, '') + '× ' : ''}${tr.kind === 'video' && c.layout === 'pip' ? '▣ PiP · ' : ''}${tr.kind === 'video' && c.transition && c.transition !== 'none' ? '⇄ ' : ''}${c.disabled ? '⊘ ' : ''}${c.link ? '🔗 ' : ''}${c.grp ? '▦ ' : ''}${m ? m.name : '?'}${tr.kind === 'audio' && c.voice !== 'original' ? ' · ' + voiceLabel(c.voice) + (c.intensity != 1 ? ' ×' + (+c.intensity).toFixed(1) : '') : ''}`;
     if (tr.kind === 'video') { g.fillStyle = '#000a'; g.fillRect(x, y, w, 16); g.fillStyle = '#fff'; }
     g.fillText(label, x + 5, y + 12);
     g.restore();
-    if (c.id === sel.clip || selLinks.has(c.id)) {
-      g.strokeStyle = col('--sel'); g.lineWidth = c.id === sel.clip ? 2 : 1;
+    if (selSet.has(c.id) || c.id === sel.clip || selLinks.has(c.id)) {
+      g.strokeStyle = col('--sel'); g.lineWidth = c.id === sel.clip || selMany ? 2 : 1;
       roundRect(g, x + 1, y + 1, w - 2, h - 2, 4); g.stroke(); g.lineWidth = 1;
     }
     g.globalAlpha = 1;
@@ -2153,6 +2177,7 @@ function draw() {
     const r = rowOf[ghost.track]; const m = media[ghost.media];
     if (r && m) { g.strokeStyle = col('--accent'); g.setLineDash([5, 4]); g.strokeRect(ghost.t * s, r.y + 2, m.duration * s, r.h - 5); g.setLineDash([]); }
   }
+  for (const h of drawHooks) { try { h(g, { s, W, H, rowOf, rs }); } catch {} }
   if (snapLine !== null) { g.strokeStyle = col('--sel'); g.beginPath(); g.moveTo(snapLine * s + .5, RULER); g.lineTo(snapLine * s + .5, H); g.stroke(); }
   // 재생 위치
   const px = playhead() * s;
@@ -2211,6 +2236,8 @@ function hit(x, y) {
 function snapTargets(exclude) {
   const xs = [0, playhead()];
   for (const c of project.clips) if (!exclude.has(c.id)) xs.push(c.start, end(c));
+  for (const m of project.markers || []) xs.push(m.t);
+  if (ui.inout) for (const v of [ui.inout.in, ui.inout.out]) if (v != null) xs.push(v);
   if (ui.guides) for (const f of guideFmts()) xs.push(f.limit);
   return xs;
 }
@@ -2406,7 +2433,11 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const hintKey = (s) => (MAC ? s : s.replace('⌘', 'Ctrl+').replace('⇧', 'Shift+').replace('⌥', 'Alt+'));
 let clipboard = null;   // { items: [{ clip, kind }], t0 }
 const groupOf = (c) => [c, ...linked(c)];
-const selectedGroup = () => { const c = clipById(sel.clip); return c ? groupOf(c) : []; };
+const selectedGroup = () => {
+  const out = new Map();
+  for (const id of selIds()) { const c = clipById(id); if (c) for (const k of groupOf(c)) out.set(k.id, k); }
+  return [...out.values()];
+};
 const copyItems = (g) => g.map((k) => ({ clip: JSON.parse(JSON.stringify(k)), kind: (trackOf(k) || {}).kind || 'audio' }));
 function copyClips() {
   const g = selectedGroup(); if (!g.length) { status('먼저 복사할 클립을 고르세요.', true); return false; }
@@ -2434,7 +2465,7 @@ function insertCopies(items, t0, startAt, prefMain) {
       }
       c.track = tr.id; project.clips.push(c); made.push(c);
     });
-    sel.clip = made[0].id; sel.track = null; sel.cue = null; sel.subs = false; sel.ov = null;
+    sel.clip = made[0].id; sel.multi = new Set(made.map((k) => k.id)); sel.track = null; sel.cue = null; sel.subs = false; sel.ov = null;
   });
   loadPeaksFor(); return made;
 }
@@ -2450,12 +2481,16 @@ function duplicateSelected() {
 function rippleDelete() {
   if (sel.cue) return deleteCue();
   if (sel.ov) return deleteOv();
-  const c = clipById(sel.clip); if (!c) return;
-  const g = groupOf(c), gone = new Set(g.map((k) => k.id)), cuts = g.map((k) => ({ track: k.track, s: k.start, e: end(k) }));
+  const g = selectedGroup(); if (!g.length) return;
+  const gone = new Set(g.map((k) => k.id)), byTrack = {};
+  for (const k of g) (byTrack[k.track] ||= []).push([k.start, end(k)]);
   edit(() => {
     project.clips = project.clips.filter((k) => !gone.has(k.id));
-    for (const { track, s, e } of cuts) for (const k of project.clips) if (k.track === track && k.start >= e - 1e-3) k.start = Math.max(0, k.start - (e - s));
-    sel.clip = null;
+    for (const [tid, iv] of Object.entries(byTrack)) {   // 같은 트랙에서 지운 구간들을 합쳐서, 그 뒤 클립을 지운 길이만큼 당깁니다
+      const merged = []; for (const [a, b] of iv.sort((x, y) => x[0] - y[0])) { const L = merged[merged.length - 1]; if (L && a <= L[1] + 1e-3) L[1] = Math.max(L[1], b); else merged.push([a, b]); }
+      for (const k of project.clips) if (k.track === tid) { let sh = 0; for (const [a, b] of merged) if (k.start >= b - 1e-3) sh += b - a; if (sh) k.start = Math.max(0, k.start - sh); }
+    }
+    sel.clip = null; sel.multi = new Set();
   });
 }
 function fadeClip(c, dir, d = 1) {   // 볼륨 키프레임으로 페이드 인/아웃
@@ -2520,7 +2555,8 @@ function selectClip(c) {
 }
 function selectTrack(t) { sel.track = t.id; sel.clip = null; sel.cue = null; sel.subs = false; sel.ov = null; renderHeads(); renderInspector(); }
 function selectCue(q) { sel.cue = q.id; sel.clip = null; sel.track = null; sel.subs = false; sel.ov = null; renderHeads(); renderInspector(); }
-const rulerItems = (tc) => [
+const rulerItems = (tc) => (menuHooks.ruler ? menuHooks.ruler(tc, rulerItems0(tc)) : rulerItems0(tc));
+const rulerItems0 = (tc) => [
   { label: '여기로 재생 위치 이동', fn: () => seek(tc) },
   { sep: true },
   { label: '타임라인 전체 보기', fn: zoomFit },
@@ -2572,11 +2608,11 @@ function clipItems(c, tc, y) {
       { label: '색 보정', sub: [...Object.keys(COLOR_PRESETS).map((k) => ({ label: k, fn: () => edit(() => Object.assign(c.color, COLOR_PRESETS[k])) })),
         { sep: true }, { label: '모든 영상 클립에 이 색 적용', fn: () => edit(() => project.clips.filter((k) => (trackOf(k) || {}).kind === 'video').forEach((k) => Object.assign(k.color, c.color))) }] });
   }
-  return items;
+  return menuHooks.clip ? menuHooks.clip(c, items, tc, y) : items;
 }
 function trackItems(t, tc, y) {
   const audio = t.kind === 'audio', armed = armedTrack() === t;
-  return [
+  const items = [
     tc !== null && { label: '여기로 재생 위치 이동', fn: () => seek(tc) },
     tc !== null && pasteItem(tc, t),
     tc !== null && { sep: true },
@@ -2594,6 +2630,7 @@ function trackItems(t, tc, y) {
     { label: '오디오 트랙 추가', fn: () => addTrack('audio') },
     { label: '트랙 지우기', danger: true, disabled: project.tracks.filter((k) => k.kind === t.kind).length <= 1, fn: () => removeTrack(t.id) },
   ];
+  return menuHooks.track ? menuHooks.track(t, items, tc, y) : items;
 }
 function cueItems(q, tc) {
   const ph = playhead();
@@ -2645,12 +2682,13 @@ $('heads').addEventListener('contextmenu', (e) => {
 $('bin').addEventListener('contextmenu', (e) => {
   const it = e.target.closest('.item'), m = it && media[it.dataset.mid];
   if (!m) return popup(e, [{ label: '파일 추가…', fn: () => $('fileIn').click() }]);
-  popup(e, [
+  const items = [
     { label: '재생 위치에 넣기', hint: '더블클릭', fn: () => placeAtPlayhead(m.id) },
     { label: '타임라인 맨 뒤에 넣기', fn: () => placeAtPlayhead(m.id, projectLength()) },
     { sep: true },
     { label: '파일 추가…', fn: () => $('fileIn').click() },
-  ]);
+  ];
+  popup(e, menuHooks.bin ? menuHooks.bin(m, items) : items);
 });
 frameEl.addEventListener('contextmenu', (e) => {
   const b = frameEl.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
@@ -2756,7 +2794,7 @@ $('monitorChk').onchange = (e) => { ui.monitor = e.target.checked; save(); };
 $('snapChk').onchange = (e) => { ui.snap = e.target.checked; save(); };
 document.addEventListener('pointerup', () => { const a = document.activeElement; if (a && (a.type === 'range' || a.type === 'checkbox')) a.blur(); });
 function edges() {
-  return [...new Set([0, projectLength(), ...project.clips.flatMap((c) => [c.start, end(c)]), ...project.subtitles.flatMap((c) => [c.start, c.end])].map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
+  return [...new Set([0, projectLength(), ...project.clips.flatMap((c) => [c.start, end(c)]), ...project.subtitles.flatMap((c) => [c.start, c.end]), ...(project.markers || []).map((m) => m.t)].map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
 }
 document.addEventListener('keydown', (e) => {
   if ($('keysDlg').open) return;
@@ -3051,7 +3089,7 @@ let lastTime = '';
   if (SHORT.on && playing && !recording) { const r = shortRange(); if (t >= r.end - 1e-3) { seek(r.start); t = r.start; } }
   const tt = `${fmt(t)}<span class="dim"> / ${fmt(L)}</span>`; if (tt !== lastTime) { lastTime = tt; $('time').innerHTML = tt; }
   stepZoom(); updateMonitor(t); draw(); studioTick(t, L);
-  if (playing) {
+  if (playing && ui.follow !== false) {
     const x = t * pps() + 200;
     if (x < tlBox.scrollLeft + 200 || x > tlBox.scrollLeft + tlBox.clientWidth - 40) tlBox.scrollLeft = x - 260;
   }
@@ -4012,7 +4050,18 @@ window.__editor = { workspace: WSI, get project() { return project; }, get sel()
   get SHORT() { return SHORT; }, get beats() { return BEATS; }, setBeats(b) { BEATS = b || []; draw(); },
   replaceProject(fn) { begin(); const np = fn(JSON.parse(JSON.stringify(project))); project = normalize(np); sel.clip = null; sel.cue = null; commit(); loadPeaksFor(); },
   addOverlay, selectOv(id) { const o = ovById(id); if (o) { selectOv(o); seek(o.start); } },
-  setDragMedia(id) { dragMedia = id; }, endDrag() { dragMedia = null; ghost = null; } };
+  setDragMedia(id) { dragMedia = id; }, endDrag() { dragMedia = null; ghost = null; },
+  // 타임라인 프로 모듈(timeline_pro.js)이 쓰는 안쪽 도구들
+  tl: {
+    canvas, tlBox, RULER, EDGE, FRAME, MAC, KEYS, drawHooks, menuHooks,
+    get ui() { return ui; }, get sel() { return sel; }, get playing() { return !!playing; }, get binSel() { return binSel; }, get binOrder() { return binOrder; },
+    setSel(o) { sel = { clip: null, track: null, cue: null, subs: false, ov: null, multi: new Set(), ...o }; },
+    begin, commit, batch, setMonTab, save, saveNow, pushServer, edit, restore, rows, rowAt, hit, pos, pps, snapTargets, snapTime, selIds, selectedGroup, groupOf, linked,
+    trackOf, isLocked, len, end, clipById, shiftKeys, subLanes, inSubRow, inOvRow, kfOwner, kfDot, renderHeads, renderInspector, draw, layout, afterChange,
+    splitAt, splitTargets, copyClips, cutClips, pasteClips, duplicateSelected, deleteSelected, rippleDelete, zoomFit, setZoom, zNow, centerAnchor,
+    placeMedia, freeAudioTrack, newTrack, loadPeaksFor, play, pause, setSnapLine(t) { snapLine = t; }, showMenu, popup, hintKey, subtitlesRef() { return project.subtitles; },
+    overlaysRef() { return project.overlays; }, setStatus: status, timelineUrl, setSaveSt, setAllowEmpty(v) { allowEmpty = !!v; }, ovEnd, ICON, WSI,
+  } };
 
 // ================================================================ 쇼츠·릴스 미리보기 · 리프레임 · 따로 내보내기
 // 안전 영역 안으로 자막 위치를 옮기는 규칙 (서버 video_editor/shorts.py의 safe_style과 같은 계산)
@@ -4286,6 +4335,7 @@ async function exportShorts(fmts) {
 })();
 </script>
 <script src="/editor-static/shorts_tools.js"></script>
+<script src="/editor-static/timeline_pro.js"></script>
 <script src="/editor-static/workspace_picker.js"></script>
 </body>
 </html>
