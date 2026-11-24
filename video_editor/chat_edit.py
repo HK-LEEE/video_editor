@@ -511,7 +511,10 @@ def apply_ops(project: Project, ops: list[dict], words: list[Word] | None = None
                 res.summaries.append(f"자막 '{c.text.strip()[:20]}' → '{op['text'][:20]}'")
                 c.text, c.words = op["text"], []
         elif k == "add_cue":
-            p.subtitles.append(Cue(id=_uid(), start=op["start"], end=op["end"], text=op["text"], source="manual"))
+            lane = 0
+            while lane < 9 and any(q.lane == lane and q.start < op["end"] and op["start"] < q.end for q in p.subtitles):
+                lane += 1
+            p.subtitles.append(Cue(id=_uid(), start=op["start"], end=op["end"], text=op["text"], source="manual", lane=lane))
             res.summaries.append(f"{_fmt(op['start'])}에 자막 '{op['text'][:20]}' 추가")
         elif k == "add_overlay":
             kind = op["kind"]
