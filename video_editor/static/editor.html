@@ -37,6 +37,21 @@
   ::-webkit-scrollbar { width: 10px; height: 10px; } ::-webkit-scrollbar-thumb { background: #353a47; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
   ::-webkit-scrollbar-thumb:hover { background: #4a5163; background-clip: content-box; border: 2px solid transparent; } ::-webkit-scrollbar-corner { background: transparent; }
 
+
+  /* ---- 프로젝트 선택기 ---- */
+  #projBtn { max-width: 220px; font-weight: 600; } #projBtn .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dialog#projDlg { background: var(--panel); color: var(--ink); border: 1px solid var(--line2); border-radius: 12px; padding: 16px 20px; width: min(640px, 94vw); max-height: 86vh; box-shadow: 0 24px 60px #000b; }
+  dialog#projDlg::backdrop { background: rgba(0,0,0,.6); }
+  #projDlg .ph2 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; } #projDlg .ph2 b { font-size: 15px; flex: 1; }
+  #projDlg .prow { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; margin-top: 5px; background: var(--panel2); }
+  #projDlg .prow.cur { border-color: var(--accent); }
+  #projDlg .prow .pn { flex: 1; min-width: 0; } #projDlg .prow .pn b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #projDlg .prow small { color: var(--muted); font-size: 11px; }
+  #projDlg .prow button { padding: 3px 8px; }
+  #projDlg .pnew { display: flex; gap: 6px; margin: 6px 0 10px; } #projDlg .pnew input { flex: 1; }
+  #projDlg #projMsg { min-height: 1.2em; font-size: 12px; color: var(--muted); margin-top: 8px; white-space: pre-wrap; } #projDlg #projMsg.err { color: #ff7b7b; }
+  #projDlg h4 { margin: 12px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent2); }
+
   /* ---- 위쪽 막대: 이름 · 작업공간 · 도구 ---- */
   #appbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
   .brand { display: flex; align-items: center; gap: 7px; margin-right: 6px; font-size: 14px; }
@@ -334,6 +349,7 @@
 </svg>
 <header id="appbar">
   <div class="brand"><svg class="ic"><use href="#i-logo"/></svg><b>video_editor</b><small>Studio</small></div>
+  <button id="projBtn" title="프로젝트 바꾸기 · 만들기 · 이름 바꾸기 · 복제 · 지우기"><svg class="ic"><use href="#i-folder"/></svg><span class="nm">프로젝트</span><span aria-hidden="true">▾</span></button>
   <nav id="wsTabs" aria-label="작업공간">
     <button data-ws="edit" title="편집: 보관함·모니터·속성을 균형 있게">편집</button>
     <button data-ws="audio" title="오디오: 타임라인을 크게, 소리 트랙을 높게">오디오</button>
@@ -551,6 +567,14 @@
 </div>
 <div id="timeline"><div id="tlInner"><div id="heads"></div><canvas id="tl"></canvas></div></div>
 
+<dialog id="projDlg">
+  <div class="ph2"><b>프로젝트</b><button id="projClose">닫기 (Esc)</button></div>
+  <p class="muted" style="margin:0 0 6px;font-size:12px">프로젝트마다 보관함·AI 결과·내보낸 영상·보관한 편집본이 따로 저장돼요. 목소리 캐릭터·템플릿·엔딩 프리셋·효과음/음악 보관함은 모두 같이 써요.</p>
+  <div class="pnew"><input type="text" id="projNew" placeholder="새 프로젝트 이름" maxlength="60"><button id="projMk" class="primary">+ 새 프로젝트</button></div>
+  <div id="projList"></div>
+  <div id="projMsg"></div>
+</dialog>
+
 <dialog id="keysDlg">
   <div class="kh"><b>단축키</b><button id="keysClose">닫기 (Esc)</button></div>
   <div class="kg" id="keysGrid"></div>
@@ -562,7 +586,10 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const canvas = $('tl'), tlBox = $('timeline'), stage = $('stage'), frameEl = $('frame'), dipEl = $('dip'), subsEl = $('subs');
-const RULER = 30, ROW = { video: 56, audio: 62 }, SUBH = 44, HEADW = 200, THMULT = [0.62, 1, 1.7], EDGE = 7, FRAME = 1 / 30, STORE = 'video_editor.v1';
+const RULER = 30, ROW = { video: 56, audio: 62 }, SUBH = 44, HEADW = 200, THMULT = [0.62, 1, 1.7], EDGE = 7, FRAME = 1 / 30;
+// 프로젝트마다 편집 상태를 따로 기억합니다 (서버가 열린 프로젝트를 window.__WS로 실어 보내요)
+const WSI = window.__WS || { id: 'default', name: '', legacy: true, timeline: null };
+const STORE = 'video_editor.v1:' + WSI.id, LEGACY_STORE = 'video_editor.v1';
 const ICON = (n, cls = '') => `<svg class="ic ${cls}"><use href="#i-${n}"/></svg>`;
 const recHtml = (on) => on ? ICON('stop') + '<span class="lb">멈추기</span>' : ICON('rec').replace('class="ic ', 'style="color:var(--rec)" class="ic ') + '<span class="lb">녹음</span>';
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -620,10 +647,18 @@ let ui = { zoom: 60, latency: 0, monitor: false, snap: true, armed: null,
 let media = {};                 // id -> meta (서버 보관함)
 let sel = { clip: null, track: null, cue: null, subs: false };
 try {
-  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+  // 이 브라우저에 저장된 것 → (예전에 쓰던 하나뿐인 저장분: '기존 작업'만) → 서버의 프로젝트 파일(timeline.json) 순서
+  let raw = null;
+  try { raw = localStorage.getItem(STORE); if (raw === null && WSI.legacy) raw = localStorage.getItem(LEGACY_STORE); } catch {}
+  const saved = raw ? JSON.parse(raw) : WSI.timeline;
   if (saved && saved.project) { project = normalize(saved.project); ui = { ...ui, ...saved.ui }; }
 } catch {}
-const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {} };
+let srvTimer = null;
+const save = () => {
+  try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {}
+  clearTimeout(srvTimer);   // 서버의 프로젝트 파일에도 (잠깐 모아서) 저장해요
+  srvTimer = setTimeout(() => { fetch('/api/workspace/timeline?project=' + encodeURIComponent(WSI.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, ui }) }).catch(() => {}); }, 1200);
+};
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
 const cueById = (id) => project.subtitles.find((c) => c.id === id);
@@ -671,7 +706,7 @@ async function loadMedia() {
 }
 const icon = (m) => (m.kind === 'video' ? [ICON('film'), '#4b3f9a'] : m.recorded ? [ICON('mic'), '#8a4f16'] : [ICON('wave'), '#1f6b50']);
 function renderBin() {
-  const list = Object.values(media).filter((m) => !m.lib && !m.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  const list = Object.values(media).filter((m) => !m.lib && !m.hidden && !m.shared).sort((a, b) => a.name.localeCompare(b.name));
   $('mediaList').innerHTML = list.length ? '' : '<p class="muted">아직 비어 있어요.</p>';
   for (const m of list) {
     const [ic, bg] = icon(m);
@@ -2578,6 +2613,63 @@ const KEYS = [
   ['타임라인', [['+ −', '확대 / 축소'], ['⌘+휠 · 핀치', '커서 위치 기준 확대'], ['Shift+휠', '좌우 스크롤'], ['⌥+끌기', '연결된 클립 무시하고 옮기기'], ['두 번 누르기', '키프레임 점 추가 / 삭제'], ['우클릭', '문맥 메뉴']]],
   ['화면', [['?', '이 안내'], ['경계 끌기', '패널 크기 바꾸기 (두 번 누르면 기본값)'], ['상단 탭', '편집 · 오디오 · 색 보정 · 쇼츠·릴스 작업공간'], ['Esc', '선택 해제']]],
 ];
+
+// ================================================================ 프로젝트 선택기
+const projApi = async (path, opt = {}) => {
+  const o = { ...opt };
+  if (o.json !== undefined) { o.method = o.method || 'POST'; o.headers = { 'Content-Type': 'application/json' }; o.body = JSON.stringify(o.json); delete o.json; }
+  const r = await fetch('/api' + path, o);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : '요청이 올바르지 않아요.'); e.status = r.status; throw e; }
+  return j;
+};
+const projSay = (msg, err) => { $('projMsg').textContent = msg || ''; $('projMsg').className = err ? 'err' : ''; };
+const projAgo = (t) => { const d = (Date.now() / 1000 - t) / 60; return d < 1 ? '방금' : d < 60 ? `${Math.floor(d)}분 전` : d < 1440 ? `${Math.floor(d / 60)}시간 전` : `${Math.floor(d / 1440)}일 전`; };
+function goProject(id, force) {   // 서버에서 프로젝트를 바꾸고 화면을 새로 불러와요 (프로젝트마다 보관함·편집 상태가 다르니까요)
+  return projApi('/workspace/open', { json: { id, force: !!force } }).then(() => { try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {} location.reload(); })
+    .catch((e) => { if (e.status === 409 && confirm(e.message + '\n\n그래도 바꿀까요? (돌고 있는 작업은 이전 프로젝트가 아니라 새 프로젝트 폴더에 결과를 남길 수 있어요)')) return goProject(id, true); projSay(e.message, true); });
+}
+async function renderProjects() {
+  let info; try { info = await projApi('/workspace'); } catch (e) { return projSay(e.message, true); }
+  const cur = info.projects.find((p) => p.active) || {};
+  const rows = info.projects;
+  $('projList').innerHTML = rows.map((p, i) => `<div class="prow ${p.active ? 'cur' : ''}" data-id="${escapeHtml(p.id)}">
+    <span class="pn"><b>${escapeHtml(p.name)}${p.active ? ' · 열려 있음' : ''}</b><small>미디어 ${p.media}개 · 보관본 ${p.saved}개 · ${projAgo(p.updated || p.created)} 수정${i < 3 && !p.active ? ' · 최근' : ''}</small></span>
+    ${p.active ? '' : '<button data-a="open" class="primary">열기</button>'}<button data-a="ren">이름</button><button data-a="dup">복제</button><button data-a="del" title="지우기 (이름을 확인해요)">지우기</button></div>`).join('');
+  $('projList').querySelectorAll('.prow').forEach((el) => {
+    const p = rows.find((x) => x.id === el.dataset.id);
+    el.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
+      try {
+        if (b.dataset.a === 'open') return goProject(p.id);
+        if (b.dataset.a === 'ren') { const n = prompt('새 이름', p.name); if (n && n.trim()) { await projApi(`/workspace/projects/${p.id}`, { method: 'PATCH', json: { name: n.trim() } }); if (p.active) $('projBtn').querySelector('.nm').textContent = n.trim(); await renderProjects(); } return; }
+        if (b.dataset.a === 'dup') { projSay('복제하는 중…'); const d = await projApi(`/workspace/projects/${p.id}/duplicate`, { json: { name: '' } }); projSay(`'${d.name}'을 만들었어요. (내보낸 영상은 복제하지 않아요)`); return renderProjects(); }
+        if (b.dataset.a === 'del') {
+          const n = prompt(`'${p.name}' 프로젝트를 지울까요?\n미디어·AI 결과·내보낸 영상·보관본이 들어 있어요. (폴더째 workspace/_trash로 옮겨 두니 직접 되돌릴 수 있어요)\n\n지우려면 프로젝트 이름을 똑같이 적어 주세요.`);
+          if (n === null) return;
+          const r = await projApi(`/workspace/projects/${p.id}/delete`, { json: { confirm: n } });
+          if (p.active) return location.reload();
+          projSay(`지웠어요. (${r.trash})`); return renderProjects();
+        }
+      } catch (e) { projSay(e.message, true); }
+    }));
+  });
+  return cur;
+}
+$('projBtn').querySelector('.nm').textContent = WSI.name || '프로젝트';
+$('projBtn').onclick = () => { projSay(''); $('projDlg').showModal(); renderProjects(); };
+$('projClose').onclick = () => $('projDlg').close();
+$('projDlg').addEventListener('click', (e) => { if (e.target === $('projDlg')) $('projDlg').close(); });
+$('projMk').onclick = async () => {
+  try { const n = $('projNew').value.trim() || `프로젝트 ${new Date().toLocaleDateString('ko-KR')}`; await projApi('/workspace/projects', { json: { name: n } }); location.reload(); }
+  catch (e) { projSay(e.message, true); }
+};
+$('projNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('projMk').click(); e.stopPropagation(); });
+// 다른 탭에서 프로젝트를 바꿨으면 알려 줘요 (이 탭의 보관함이 다른 프로젝트 것이 되어 버리니까요)
+async function checkActiveProject() {
+  try { const w = await projApi('/workspace'); if (w.active !== WSI.id && !$('projBanner')) { const b = document.createElement('div'); b.id = 'projBanner'; b.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:99;background:var(--accent);color:#1a1208;padding:8px 14px;border-radius:9px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px #0008'; b.textContent = '다른 창에서 프로젝트를 바꿨어요 — 눌러서 새로고침'; b.onclick = () => location.reload(); document.body.appendChild(b); } } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkActiveProject(); });
+
 function openKeys() {
   const dlg = $('keysDlg'); if (dlg.open) return;
   $('keysGrid').innerHTML = KEYS.map(([h, rows]) => `<h3>${h}</h3>` + rows.map(([k, d]) => `<div class="kr"><span>${escapeHtml(d)}</span><span>${k.split(' ').map((x) => (/^[/·]$/.test(x) ? x : `<kbd>${escapeHtml(hintKey(x))}</kbd>`)).join(' ')}</span></div>`).join('')).join('');
@@ -3353,7 +3445,7 @@ $('jApply').onclick = () => jGuard(async () => {
   J.fromClips = res.clips.filter((c) => c.track === vt.id).map((c) => c.id);   // 다시 분석·적용하면 이번에 놓은 클립(이음 모핑 다리 포함)을 대신해요
 }, 'jMsg2');
 
-window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; },
+window.__editor = { workspace: WSI, switchProject: (id) => goProject(id), get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; },
   status, placeMedia, placeAtPlayhead, loadMedia, loadPeaksFor, uploadFiles, uid, newTrack, clipById, projectBody, projectLength, fmt, clamp, escapeHtml, setDock, freeAudioTrack,
   get SHORT() { return SHORT; }, get beats() { return BEATS; }, setBeats(b) { BEATS = b || []; draw(); },
   replaceProject(fn) { begin(); const np = fn(JSON.parse(JSON.stringify(project))); project = normalize(np); sel.clip = null; sel.cue = null; commit(); loadPeaksFor(); },

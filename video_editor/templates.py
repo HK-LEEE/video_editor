@@ -98,8 +98,8 @@ class Store:
 
 
 class ProjectStore:
-    def __init__(self, root: Path):
-        self.dir = Path(root) / "projects"
+    def __init__(self, dir_: Path):
+        self.dir = Path(dir_)            # 프로젝트 폴더의 saved/ — 프로젝트마다 따로 보관해요
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _p(self, pid: str) -> Path:

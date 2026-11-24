@@ -187,7 +187,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         if not cid:
             return None
         _check_id(cid)
-        ch = characters.get(ws.root, cid)
+        ch = characters.get(ws.home, cid)
         if ch is None:
             raise HTTPException(404, "보이스 캐릭터를 찾을 수 없어요.")
         if ch.ref and not ai_voice_ready():
@@ -322,17 +322,21 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.get("/characters")
     def list_characters():
-        return [c.model_dump() for c in characters.load(ws.root)]
+        return [c.model_dump() for c in characters.load(ws.home)]
 
     @router.post("/characters")
     def create_character(b: characters.Character):
         check_character(b)
-        return characters.create(ws.root, b).model_dump()
+        if b.ref:
+            ws.promote(b.ref)       # 캐릭터는 모든 프로젝트가 쓰니 샘플 목소리 파일도 공유 보관함에 둡니다
+        return characters.create(ws.home, b).model_dump()
 
     @router.put("/characters/{cid}")
     def update_character(cid: str, b: characters.Character):
         _check_id(cid), check_character(b)
-        ch = characters.update(ws.root, cid, b)
+        if b.ref:
+            ws.promote(b.ref)
+        ch = characters.update(ws.home, cid, b)
         if ch is None:
             raise HTTPException(404, "보이스 캐릭터를 찾을 수 없어요.")
         return ch.model_dump()
@@ -340,7 +344,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     @router.delete("/characters/{cid}")
     def delete_character(cid: str):
         _check_id(cid)
-        if not characters.delete(ws.root, cid):
+        if not characters.delete(ws.home, cid):
             raise HTTPException(404, "보이스 캐릭터를 찾을 수 없어요.")
         return {"ok": True}
 

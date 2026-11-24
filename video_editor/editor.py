@@ -31,7 +31,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from . import ai_voice, characters, overlays as ovl_mod, shorts
+from . import ai_voice, characters, overlays as ovl_mod, shorts, workspaces
 from .overlays import Overlay
 from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
@@ -50,14 +50,36 @@ PEAKS_PER_S = 100
 # ================================================================ 보관함
 
 class Workspace:
-    def __init__(self, root: Path):
-        self.root = Path(root)
-        for sub in ("media", "cache", "exports"):
-            (self.root / sub).mkdir(parents=True, exist_ok=True)
+    """작업 폴더. 프로젝트별 파일(media·cache·exports…)은 `root`(지금 열린 프로젝트 폴더) 아래에 있고,
+    모든 프로젝트가 같이 쓰는 것(캐릭터·템플릿·엔딩 프리셋·설정, 효과음·음악 보관함)은 `home` 아래에 있습니다.
+    `at(프로젝트 id)`는 그 프로젝트에 고정된 같은 작업 폴더를 돌려줘요 (여러 프로젝트에 걸친 일괄 작업용)."""
+
+    def __init__(self, home: Path, project: str | None = None, _projects: workspaces.Projects | None = None):
+        self.home = Path(home)
+        self.projects = _projects or workspaces.Projects(self.home)
+        self._pid = project
+        self.shared = self.home / "library" / "media"        # 모든 프로젝트가 쓰는 미디어 (효과음·음악, 템플릿 인트로·아웃트로, 캐릭터 샘플)
+        self.shared.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def pid(self) -> str:
+        return self._pid or self.projects.active
+
+    @property
+    def root(self) -> Path:
+        return self.projects.dir(self.pid)
+
+    def at(self, pid: str) -> "Workspace":
+        self.projects.info(pid)
+        return Workspace(self.home, pid, self.projects)
 
     def meta_path(self, mid: str) -> Path:
         _check_id(mid)
-        return self.root / "media" / f"{mid}.json"
+        p = self.root / "media" / f"{mid}.json"
+        if p.exists():
+            return p
+        s = self.shared / f"{mid}.json"
+        return s if s.exists() else p
 
     def meta(self, mid: str) -> dict:
         p = self.meta_path(mid)
@@ -66,7 +88,23 @@ class Workspace:
         return json.loads(p.read_text())
 
     def media_file(self, mid: str) -> Path:
-        return self.root / "media" / self.meta(mid)["file"]
+        return self.meta_path(mid).parent / self.meta(mid)["file"]
+
+    def all_meta(self) -> list[dict]:
+        """이 프로젝트의 미디어 + 공유 미디어 (같은 id면 프로젝트 것이 우선)."""
+        out = {}
+        for d in (self.shared, self.root / "media"):
+            for p in d.glob("*.json"):
+                try:
+                    m = json.loads(p.read_text())
+                except (OSError, ValueError):
+                    continue
+                out[m["id"]] = m
+        return list(out.values())
+
+    def promote(self, mid: str) -> bool:
+        """이 프로젝트의 미디어를 공유 보관함에도 복사합니다 (다른 프로젝트에서도 쓰는 템플릿·캐릭터가 가리키는 파일)."""
+        return workspaces.promote_media(self.root / "media", self.shared, mid)
 
 
 def _check_id(x: str) -> None:
@@ -97,27 +135,28 @@ def probe(path: Path) -> dict:
     }
 
 
-def add_media(ws: Workspace, src: Path, name: str, recorded: bool = False) -> dict:
+def add_media(ws: Workspace, src: Path, name: str, recorded: bool = False, shared: bool = False) -> dict:
     mid = uuid.uuid4().hex
+    mdir = ws.shared if shared else ws.root / "media"
     ext = Path(name).suffix.lower()
     if not ext[1:].isalnum():
         ext = ""
     if recorded:
         # 브라우저 녹음(webm/mp4)은 바로 wav로 바꿔 둡니다
         audio = load_audio(src)
-        save_wav(ws.root / "media" / f"{mid}.wav", audio)
+        save_wav(mdir / f"{mid}.wav", audio)
         src.unlink(missing_ok=True)
         ext = ".wav"
     else:
-        shutil.move(str(src), ws.root / "media" / f"{mid}{ext}")
+        shutil.move(str(src), mdir / f"{mid}{ext}")
     file = f"{mid}{ext}"
-    info = probe(ws.root / "media" / file)
+    info = probe(mdir / file)
     if info["duration"] <= 0 or not (info["has_audio"] or info["has_video"]):
-        (ws.root / "media" / file).unlink(missing_ok=True)
+        (mdir / file).unlink(missing_ok=True)
         raise HTTPException(400, "영상이나 소리를 읽을 수 없는 파일입니다.")
     meta = {"id": mid, "name": name, "file": file, "recorded": recorded,
             "kind": "video" if info["has_video"] else "audio", **info}
-    ws.meta_path(mid).write_text(json.dumps(meta, ensure_ascii=False))
+    (mdir / f"{mid}.json").write_text(json.dumps(meta, ensure_ascii=False))
     return meta
 
 
@@ -167,7 +206,7 @@ def voice_ref(ws: Workspace, voice: str) -> str | None:
     if ai_voice.is_ai_voice(voice):
         return ai_voice.ref_id(voice)
     if characters.is_char(voice):
-        ch = characters.get(ws.root, characters.char_id(voice))
+        ch = characters.get(ws.home, characters.char_id(voice))
         return ch.ref or None if ch else None
     return None
 
@@ -198,7 +237,7 @@ def clip_audio(ws: Workspace, mid: str, voice: str = ORIGINAL, intensity: float 
     if voice == ORIGINAL:
         return media_audio(ws, mid)
     if characters.is_char(voice):
-        ch = characters.get(ws.root, characters.char_id(voice))
+        ch = characters.get(ws.home, characters.char_id(voice))
         out = character_audio(ws, mid, ch) if ch else None
         return media_audio(ws, mid) if out is None else out   # 캐릭터가 없어졌거나 AI 변환 전이면 원본 소리
     if ai_voice.is_ai_voice(voice):
@@ -220,8 +259,9 @@ def clip_audio(ws: Workspace, mid: str, voice: str = ORIGINAL, intensity: float 
 def remove_media(ws: Workspace, mid: str) -> None:
     """작업 중간에 만든 임시 미디어를 보관함에서 지웁니다."""
     meta = ws.meta(mid)
-    (ws.root / "media" / meta["file"]).unlink(missing_ok=True)
-    ws.meta_path(mid).unlink(missing_ok=True)
+    mp = ws.meta_path(mid)
+    (mp.parent / meta["file"]).unlink(missing_ok=True)
+    mp.unlink(missing_ok=True)
     for f in (ws.root / "cache").glob(f"{mid}_*"):
         f.unlink(missing_ok=True)
 
@@ -450,7 +490,7 @@ def project_key(p: Project, ws: Workspace | None = None) -> str:
             if ref:
                 raw += "1" if ai_cache(ws, c.media, ref).exists() else "0"
             if characters.is_char(c.voice):
-                ch = characters.get(ws.root, characters.char_id(c.voice))
+                ch = characters.get(ws.home, characters.char_id(c.voice))
                 raw += ch.signature() if ch else "-"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
@@ -678,6 +718,12 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
                 (exports / name).unlink(missing_ok=True)
     if r.returncode != 0:
         raise HTTPException(500, f"내보내기 실패: {r.stderr[-800:]}")
+    if p.subtitles:   # 자막은 프로젝트의 subtitles 폴더에도 SRT로 남겨 둡니다 (내보낸 영상과 같은 이름)
+        try:
+            (ws.root / "subtitles" / f"{out.stem}.srt").write_text(to_srt(sub_cues, p.subtitle_lang), encoding="utf-8")
+        except OSError:
+            pass
+    ws.projects.touch(ws.pid)
     return out
 
 
@@ -701,7 +747,7 @@ def make_router(ws: Workspace) -> APIRouter:
         return [{"name": ORIGINAL, "label": "원본 (변조 없음)"}] + \
                [{"name": n, "label": s.label} for n, s in load_presets().items()] + \
                [{"name": characters.PREFIX + c.id, "label": "🎭 " + c.name, "character": True, "ref": c.ref}
-                for c in characters.load(ws.root)]
+                for c in characters.load(ws.home)]
 
     # ---- AI 음성 변환 (Seed-VC)
     jobs = ai_voice.JobRunner()
@@ -734,6 +780,8 @@ def make_router(ws: Workspace) -> APIRouter:
             raise HTTPException(404, "작업을 찾을 수 없습니다.")
         return {"status": job.status, "error": job.error, "result": job.result}
 
+    from .workspace_routes import add_routes as add_workspace_routes
+    add_workspace_routes(router, ws, jobs)
     from .ai_routes import add_routes
     add_routes(router, ws, jobs)
     from .autojoin import add_routes as add_join_routes
@@ -757,8 +805,7 @@ def make_router(ws: Workspace) -> APIRouter:
 
     @router.get("/media")
     def list_media():
-        metas = [json.loads(p.read_text()) for p in (ws.root / "media").glob("*.json")]
-        return sorted(metas, key=lambda m: m["name"])
+        return sorted(ws.all_meta(), key=lambda m: m["name"])
 
     @router.get("/media/{mid}/info")
     def media_info(mid: str):
@@ -802,8 +849,8 @@ def make_router(ws: Workspace) -> APIRouter:
                         headers={"Content-Disposition": 'attachment; filename="subtitles.srt"'})
 
     @router.get("/exports/{name}")
-    def get_export(name: str):
-        p = ws.root / "exports" / Path(name).name
+    def get_export(name: str, project: str = ""):
+        p = (ws.at(project) if project else ws).root / "exports" / Path(name).name
         if not p.exists() or p.suffix not in (".mp4", ".png"):
             raise HTTPException(404)
         return FileResponse(p, filename=p.name)

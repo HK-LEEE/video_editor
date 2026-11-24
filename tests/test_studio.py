@@ -291,7 +291,7 @@ def test_emotion_apply_on_recorded_clip(api, monkeypatch):
     m = upload(c, tmp / "s.wav")
     r = run(c, "/api/ai/emotion/apply", {"media": m["id"], "emotion": "sad"})
     assert r["status"] == "done" and "슬픔" in r["result"]["media"]["name"] and len(r["result"]["spans"]) == 2
-    y, _ = sf.read(tmp / "ws" / "media" / r["result"]["media"]["file"], dtype="float32")
+    y, _ = sf.read(tmp / "ws" / "projects" / "기본-프로젝트" / "media" / r["result"]["media"]["file"], dtype="float32")
     assert mean_f0(y[: SR]) < mean_f0(voiced(1.0)) * 0.95
     # 자동: 받아쓰기로 문장마다
     segs = [{"start": 0.0, "end": 1.0, "text": "정말 행복해요!", "words": []}, {"start": 2.0, "end": 3.0, "text": "너무 슬퍼요ㅠㅠ", "words": []}]

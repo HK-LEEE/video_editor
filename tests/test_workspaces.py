@@ -1,0 +1,192 @@
+"""프로젝트별 작업 폴더: 예전 구조 옮기기(안전·되풀이 가능) · 만들기/열기/이름/복제/지우기 · 프로젝트를 건너는 템플릿 일괄 적용."""
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from tests.test_editor import make_video, make_voice, tracks, upload
+from tests.test_shorts_tools import _setup_template, wait
+from video_editor import workspaces
+from video_editor.editor import Workspace, make_router
+
+
+def tree(root: Path) -> dict:
+    return {str(p.relative_to(root)): hashlib.md5(p.read_bytes()).hexdigest() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def legacy_workspace(home: Path) -> dict:
+    """예전 구조의 작업 폴더를 만듭니다: 미디어·캐시·내보내기·보관한 프로젝트·캐릭터·템플릿·설정·효과음 보관함 항목."""
+    (home / "media").mkdir(parents=True), (home / "cache").mkdir(), (home / "exports").mkdir(), (home / "projects").mkdir()
+    voice = make_voice(home / "tmp_voice.wav", 1.0)
+    (home / "media" / ("a" * 32 + ".wav")).write_bytes(voice.read_bytes())
+    meta = {"id": "a" * 32, "name": "내 목소리.wav", "file": "a" * 32 + ".wav", "recorded": True, "kind": "audio",
+            "duration": 1.0, "has_video": False, "has_audio": True, "width": 0, "height": 0}
+    (home / "media" / ("a" * 32 + ".json")).write_text(json.dumps(meta))
+    (home / "media" / ("b" * 32 + ".wav")).write_bytes(voice.read_bytes())   # 효과음 보관함 항목
+    (home / "media" / ("b" * 32 + ".json")).write_text(json.dumps({**meta, "id": "b" * 32, "file": "b" * 32 + ".wav", "name": "뿅", "lib": "sfx", "user": False}))
+    (home / "media" / ("c" * 32 + ".wav")).write_bytes(voice.read_bytes())   # 템플릿 인트로
+    (home / "media" / ("c" * 32 + ".json")).write_text(json.dumps({**meta, "id": "c" * 32, "file": "c" * 32 + ".wav", "name": "인트로"}))
+    (home / "cache" / ("a" * 32 + "_raw.wav")).write_bytes(b"cache-bytes")
+    (home / "cache" / ("a" * 32 + "_ai_x_30.wav")).write_bytes(b"ai-output")
+    (home / "exports" / "video_editor_1234.mp4").write_bytes(b"mp4-bytes")
+    saved = {"id": "d" * 12, "name": "예전 보관본", "saved_at": 1.0, "project": {"tracks": tracks(), "clips": []}}
+    (home / "projects" / ("d" * 12 + ".json")).write_text(json.dumps(saved))
+    (home / "characters.json").write_text(json.dumps([{"id": "ch1", "name": "아저씨", "preset": "deep", "intensity": 1.0, "ref": "a" * 32, "note": ""}]))
+    (home / "templates.json").write_text(json.dumps([{"id": "t1", "name": "내 채널", "intro": "c" * 32}]))
+    (home / "settings.json").write_text(json.dumps({"engine": "cli"}))
+    voice.unlink()
+    return {"before": tree(home)}
+
+
+def test_migrates_legacy_workspace_without_losing_anything(tmp_path):
+    home = tmp_path / "ws"
+    home.mkdir()
+    before = legacy_workspace(home)["before"]
+    ws = Workspace(home)
+    pid = ws.pid
+    assert ws.projects.info(pid)["name"] == "기존 작업" and ws.projects.info(pid)["origin"] == "migrated"
+    p = home / "projects" / pid
+    # 내 파일은 프로젝트 안으로 (같은 내용), 효과음 보관함 항목은 공유 보관함으로
+    assert (p / "media" / ("a" * 32 + ".wav")).exists() and (p / "media" / ("a" * 32 + ".json")).exists()
+    assert (home / "library" / "media" / ("b" * 32 + ".wav")).exists() and not (p / "media" / ("b" * 32 + ".wav")).exists()
+    assert (p / "cache" / ("a" * 32 + "_ai_x_30.wav")).read_bytes() == b"ai-output"        # AI 결과 캐시
+    assert (p / "exports" / "video_editor_1234.mp4").read_bytes() == b"mp4-bytes"
+    assert json.loads((p / "saved" / ("d" * 12 + ".json")).read_text())["name"] == "예전 보관본"
+    # 예전 폴더는 비었으니 사라지고, 공유 설정 파일은 제자리
+    assert not (home / "media").exists() and not (home / "cache").exists() and not (home / "exports").exists()
+    assert not list((home / "projects").glob("*.json"))
+    assert (home / "characters.json").exists() and (home / "templates.json").exists() and (home / "settings.json").exists()
+    # 템플릿 인트로·캐릭터 샘플은 어느 프로젝트에서도 쓰도록 공유 보관함에도 있음
+    assert (home / "library" / "media" / ("c" * 32 + ".wav")).exists() and (home / "library" / "media" / ("a" * 32 + ".wav")).exists()
+    # 모든 파일 내용이 그대로 남아 있음 (이름만 바뀜): 옮기기 전 내용 해시 집합 ⊆ 옮긴 뒤
+    after = set(tree(home).values())
+    assert set(before.values()) <= after
+    # 백업·기록
+    mig = home / "_migration"
+    manifest = json.loads(next(mig.glob("manifest-*.json")).read_text())
+    assert manifest["verified"] and manifest["project"] == pid
+    bak = next(mig.glob("backup-*"))
+    assert (bak / "media" / ("a" * 32 + ".json")).exists() and (bak / "projects" / ("d" * 12 + ".json")).exists() and (bak / "characters.json").exists()
+
+
+def test_migration_is_idempotent_and_resumable(tmp_path):
+    home = tmp_path / "ws"
+    home.mkdir()
+    legacy_workspace(home)
+    ws = Workspace(home)
+    snap = tree(home)
+    Workspace(home)                       # 다시 켜도
+    assert tree(home) == snap and len(list((home / "_migration").glob("manifest-*.json"))) == 1
+    assert len(Workspace(home).projects.list()) == 1
+    # 옮기다 멈춘 상태(프로젝트 폴더는 있고, 예전 파일이 일부 남음)에서도 이어서 끝냄
+    (home / "media").mkdir()
+    (home / "media" / ("e" * 32 + ".wav")).write_bytes(b"late")
+    (home / "media" / ("e" * 32 + ".json")).write_text(json.dumps({"id": "e" * 32, "name": "늦게", "file": "e" * 32 + ".wav"}))
+    ws2 = Workspace(home)
+    assert len(ws2.projects.list()) == 1 and (home / "projects" / ws.pid / "media" / ("e" * 32 + ".wav")).read_bytes() == b"late"
+    assert not (home / "media").exists()
+
+
+def test_migration_never_overwrites_existing_files(tmp_path):
+    home = tmp_path / "ws"
+    home.mkdir()
+    legacy_workspace(home)
+    ws = Workspace(home)
+    (home / "cache").mkdir()
+    (home / "cache" / ("a" * 32 + "_raw.wav")).write_bytes(b"different")        # 같은 이름이 이미 프로젝트에 있음
+    workspaces.migrate_legacy(home)
+    assert (home / "projects" / ws.pid / "cache" / ("a" * 32 + "_raw.wav")).read_bytes() == b"cache-bytes"
+    left = list((home / "projects" / ws.pid / "legacy-leftovers").glob("*"))
+    assert len(left) == 1 and left[0].read_bytes() == b"different"
+
+
+@pytest.fixture()
+def api(tmp_path):
+    app = FastAPI()
+    ws = Workspace(tmp_path / "ws")
+    app.include_router(make_router(ws))
+    return TestClient(app), tmp_path, ws
+
+
+def test_project_crud_and_isolation(api):
+    c, tmp, ws = api
+    info = c.get("/api/workspace").json()
+    first = info["active"]
+    assert [p["name"] for p in info["projects"]] == ["기본 프로젝트"]
+    m1 = upload(c, make_voice(tmp / "a.wav"))
+    assert [m["id"] for m in c.get("/api/media").json() if not m.get("lib")] == [m1["id"]]
+    new = c.post("/api/workspace/projects", json={"name": "쇼츠 시리즈"}).json()
+    assert c.get("/api/workspace").json()["active"] == new["id"]
+    assert not [m for m in c.get("/api/media").json() if not m.get("lib")]            # 새 프로젝트는 비어 있음
+    m2 = upload(c, make_voice(tmp / "b.wav"))
+    assert c.get(f"/api/media/{m1['id']}/info").status_code == 404                     # 다른 프로젝트 미디어는 안 보임
+    # 이름 바꾸기 · 복제(미디어까지) · 열기
+    assert c.patch(f"/api/workspace/projects/{new['id']}", json={"name": "쇼츠 2"}).json()["name"] == "쇼츠 2"
+    dup = c.post(f"/api/workspace/projects/{new['id']}/duplicate", json={}).json()
+    assert dup["name"] == "쇼츠 2 복사본" and (tmp / "ws" / "projects" / dup["id"] / "media" / m2["file"]).exists()
+    assert c.post("/api/workspace/open", json={"id": dup["id"]}).status_code == 200
+    assert c.get(f"/api/media/{m2['id']}/info").status_code == 200
+    c.post("/api/workspace/open", json={"id": first})
+    assert c.get(f"/api/media/{m1['id']}/info").status_code == 200
+    # 지우기: 이름을 똑같이 적어야 하고, 폴더째 _trash로 감
+    assert c.post(f"/api/workspace/projects/{dup['id']}/delete", json={"confirm": "아님"}).status_code == 400
+    r = c.post(f"/api/workspace/projects/{dup['id']}/delete", json={"confirm": dup["name"]})
+    assert r.status_code == 200 and not (tmp / "ws" / "projects" / dup["id"]).exists()
+    assert list((tmp / "ws" / "_trash").glob(f"{dup['id']}-*")) and (next((tmp / "ws" / "_trash").glob(f"{dup['id']}-*")) / "media" / m2["file"]).exists()
+    # 열려 있는 프로젝트를 지우면 다른 프로젝트가 열리고, 마지막 하나는 못 지움
+    c.post(f"/api/workspace/projects/{first}/delete", json={"confirm": "기본 프로젝트"})
+    assert c.get("/api/workspace").json()["active"] == new["id"]
+    assert c.post(f"/api/workspace/projects/{new['id']}/delete", json={"confirm": "쇼츠 2"}).status_code == 400
+    assert c.post("/api/workspace/open", json={"id": "../etc"}).status_code in (400, 404)
+
+
+def test_timeline_file_per_project(api):
+    c, tmp, ws = api
+    first = ws.pid
+    st = {"project": {"tracks": tracks(), "clips": []}, "ui": {"zoom": 80}}
+    assert c.put("/api/workspace/timeline", json=st).json()["ok"]
+    other = c.post("/api/workspace/projects", json={"name": "둘째"}).json()
+    assert c.get("/api/workspace/timeline").json() == {}                               # 둘째는 비어 있음
+    assert c.get("/api/workspace/timeline", params={"project": first}).json()["ui"]["zoom"] == 80
+    dup = c.post(f"/api/workspace/projects/{first}/duplicate", json={"name": "복사"}).json()
+    assert c.get("/api/workspace/timeline", params={"project": dup["id"]}).json()["ui"]["zoom"] == 80
+    assert c.put("/api/workspace/timeline", json={"nope": 1}).status_code == 400
+    assert other["id"] != first
+
+
+def test_library_and_templates_are_shared_and_batch_works_across_projects(api):
+    c, tmp, ws = api
+    first = ws.pid
+    # 프로젝트 A: 템플릿(인트로·아웃트로·엔딩)을 만들고, 영상 하나를 프로젝트로 보관
+    tpl, intro, outro = _setup_template(c, tmp)
+    va = upload(c, make_video(tmp / "va.mp4", 2, size="270x480"))
+    sa = c.post("/api/projects", json={"name": "A의 영상", "project": {"tracks": tracks(), "clips": [
+        {"id": "c1", "track": "v1", "media": va["id"], "src_in": 0, "src_out": 2, "start": 0}]}}).json()
+    # 프로젝트 B: 다른 영상
+    b = c.post("/api/workspace/projects", json={"name": "B"}).json()
+    vb = upload(c, make_video(tmp / "vb.mp4", 2, size="270x480"))
+    sb = c.post("/api/projects", json={"name": "B의 영상", "project": {"tracks": tracks(), "clips": [
+        {"id": "c1", "track": "v1", "media": vb["id"], "src_in": 0, "src_out": 2, "start": 0}]}}).json()
+    # 템플릿·효과음은 B에서도 보이고, 인트로 미디어도 B에서 읽힘
+    assert [t["name"] for t in c.get("/api/templates").json()] == ["내 채널"]
+    assert any(m["id"] == intro["id"] for m in c.get("/api/media").json())
+    assert c.get(f"/api/media/{intro['id']}/info").status_code == 200
+    lib = c.post("/api/library/ensure").json()
+    assert lib["items"] and all((ws.shared / f"{m['id']}.json").exists() for m in lib["media"])
+    # 보관본 목록은 두 프로젝트를 다 보여 주고, 한 번에 둘 다 입히고 내보냄
+    listing = c.get("/api/projects").json()
+    assert {x["name"] for x in listing} == {"A의 영상", "B의 영상"} and {x["workspace"] for x in listing} == {first, b["id"]}
+    res = wait(c, c.post("/api/template/batch", json={"template_id": tpl["id"], "project_ids": [sa["id"], sb["id"]]}).json()["job"], 120)
+    assert res["status"] == "done" and all(x["ok"] for x in res["result"]["results"]), res
+    pa = c.get(f"/api/projects/{sa['id']}").json()
+    assert pa["workspace"] == first and any(x["tpl"] == "intro" for x in pa["project"]["clips"])
+    ex = wait(c, c.post("/api/batch/export", json={"project_ids": [sa["id"], sb["id"]], "format": "shorts"}).json()["job"], 180)
+    assert ex["status"] == "done" and all(x["ok"] for x in ex["result"]["results"]), ex
+    for x in ex["result"]["results"]:
+        assert c.get(x["url"]).status_code == 200                                      # 다른 프로젝트의 내보내기도 받을 수 있음
+    # 보관본은 프로젝트 사이에서도 지울 수 있음
+    c.delete(f"/api/projects/{sa['id']}")
+    assert [x["name"] for x in c.get("/api/projects").json()] == ["B의 영상"]

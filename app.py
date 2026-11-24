@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -11,7 +13,7 @@ from pathlib import Path
 import gradio as gr
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from video_editor import VoiceSettings, load_audio, load_presets, process, save_wav
 from video_editor import library
@@ -81,7 +83,9 @@ with gr.Blocks(title="video_editor 보이스 체인저") as demo:
     all_btn.click(convert_all, [inp, intensity], all_outs)
 
 
-WORKSPACE = Workspace(Path(__file__).with_name("workspace"))
+# 작업 폴더: workspace/projects/<프로젝트>/ 아래에 프로젝트별로 나뉘어 저장됩니다 (예전 구조면 처음 켤 때 '기존 작업'으로 옮겨요).
+# 다른 곳을 쓰려면 환경변수 VIDEO_EDITOR_WORKSPACE=/경로
+WORKSPACE = Workspace(Path(os.environ.get("VIDEO_EDITOR_WORKSPACE") or Path(__file__).with_name("workspace")))
 library.warm(WORKSPACE)   # 효과음·음악을 뒤에서 미리 만들어 둡니다
 EDITOR_HTML = Path(__file__).with_name("video_editor") / "static" / "editor.html"
 
@@ -91,7 +95,14 @@ app.include_router(make_router(WORKSPACE))
 
 @app.get("/editor", include_in_schema=False)
 def editor():
-    return FileResponse(EDITOR_HTML)
+    """열린 프로젝트(이름·id·마지막 편집 상태)를 화면에 같이 실어 보냅니다 — 브라우저가 프로젝트별로 편집 상태를 따로 기억하게요."""
+    pr = WORKSPACE.projects
+    info = pr.info(WORKSPACE.pid)
+    ws_info = {"id": info["id"], "name": info["name"], "legacy": info.get("origin") == "migrated",
+               "timeline": pr.load_timeline(info["id"])}
+    tag = "<script>window.__WS=" + json.dumps(ws_info, ensure_ascii=False).replace("<", "\\u003c") + ";</script>"
+    html = EDITOR_HTML.read_text(encoding="utf-8").replace("</head>", tag + "</head>", 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/editor-static/{name}", include_in_schema=False)   # 편집기 화면 스크립트 (정해 둔 파일만)

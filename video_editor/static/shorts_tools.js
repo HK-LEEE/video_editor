@@ -370,7 +370,7 @@ function pageTpl() {
       <div class="row"><span class="muted">엔딩</span><select id="nEnd"></select></div>
       <div class="row"><button id="nSave" class="primary">템플릿 저장</button></div></div>
     <h3>일괄 적용 대상</h3>
-    <p class="muted">① 보관한 프로젝트를 고르거나 ② 보관함 영상을 골라 한 번에 새 프로젝트로 만들어요.</p>
+    <p class="muted">여러 프로젝트에 흩어진 보관본도 한꺼번에 골라 입힐 수 있어요. ① 보관한 프로젝트를 고르거나 ② 보관함 영상을 골라 한 번에 새 프로젝트로 만들어요.</p>
     <div class="row"><button id="pSave">현재 프로젝트 보관하기</button><input type="text" id="pName" placeholder="보관 이름"></div>
     <div id="pList"></div>
     <div class="row"><b style="font-size:12px">보관함 영상으로 새 프로젝트 만들기</b></div><div id="vList"></div>
@@ -404,9 +404,9 @@ function paintTpl() {
   $('#pList').innerHTML = T.projects.length ? '' : '<p class="muted">보관한 프로젝트가 없어요.</p>';
   for (const p of T.projects) {
     const el = document.createElement('div'); el.className = 'lib'; el.style.cursor = 'default';
-    el.innerHTML = `<input type="checkbox" ${T.projSel.has(p.id) ? 'checked' : ''}><span class="n">${esc(p.name)}<small>클립 ${p.clips}개 · ${p.length.toFixed(1)}초</small></span><button data-a="open">열기</button><button data-a="del">✕</button>`;
+    el.innerHTML = `<input type="checkbox" ${T.projSel.has(p.id) ? 'checked' : ''}><span class="n">${esc(p.name)}<small>${p.current ? '' : `📁 ${esc(p.workspace_name)} · `}클립 ${p.clips}개 · ${p.length.toFixed(1)}초</small></span><button data-a="open">${p.current ? '열기' : '그 프로젝트로'}</button><button data-a="del">✕</button>`;
     el.querySelector('input').onchange = (e) => (e.target.checked ? T.projSel.add(p.id) : T.projSel.delete(p.id));
-    el.querySelector('[data-a=open]').onclick = async () => { try { const r = await api(`/projects/${p.id}`); ed.replaceProject(() => r.project); await ed.loadMedia(); say('mMsg', `'${r.name}'을 열었어요.`); } catch (e) { say('mMsg', e.message, true); } };
+    el.querySelector('[data-a=open]').onclick = async () => { try { if (!p.current) { if (confirm(`'${p.name}'은 '${p.workspace_name}' 프로젝트의 보관본이에요.\n그 프로젝트로 바꿀까요?`)) await ed.switchProject(p.workspace); return; } const r = await api(`/projects/${p.id}`); ed.replaceProject(() => r.project); await ed.loadMedia(); say('mMsg', `'${r.name}'을 열었어요.`); } catch (e) { say('mMsg', e.message, true); } };
     el.querySelector('[data-a=del]').onclick = async () => { await api(`/projects/${p.id}`, { method: 'DELETE' }); T.projSel.delete(p.id); loadTpl(); };
     $('#pList').appendChild(el);
   }

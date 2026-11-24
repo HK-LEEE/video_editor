@@ -34,7 +34,7 @@ def _specs() -> list[dict]:
 
 def ensure_item(ws: Workspace, spec: dict) -> dict:
     mid = lib_id(spec["key"])
-    meta_p = ws.meta_path(mid)
+    meta_p = ws.shared / f"{mid}.json"        # 효과음·음악은 모든 프로젝트가 같이 쓰는 공유 보관함에 둡니다
     if meta_p.exists():
         return json.loads(meta_p.read_text())
     with _lock:
@@ -42,7 +42,7 @@ def ensure_item(ws: Workspace, spec: dict) -> dict:
             return json.loads(meta_p.read_text())
         x = spec["fn"]()
         file = f"{mid}.wav"
-        sf.write(ws.root / "media" / file, x, SR, subtype="PCM_16")
+        sf.write(ws.shared / file, x, SR, subtype="PCM_16")
         meta = {"id": mid, "name": spec["name"], "file": file, "recorded": False, "kind": "audio", "duration": round(x.size / SR, 4),
                 "has_video": False, "has_audio": True, "width": 0, "height": 0,
                 "lib": spec["kind"], "key": spec["key"], "tags": spec["tags"], "mood": spec["mood"], "bpm": spec["bpm"], "user": False}
@@ -66,11 +66,11 @@ def catalog(ws: Workspace) -> list[dict]:
     items = []
     for s in _specs():
         mid = lib_id(s["key"])
-        p = ws.meta_path(mid)
+        p = ws.shared / f"{mid}.json"
         meta = json.loads(p.read_text()) if p.exists() else None
         items.append({"id": mid, "key": s["key"], "kind": s["kind"], "name": s["name"], "tags": s["tags"], "mood": s["mood"], "bpm": s["bpm"],
                       "duration": meta["duration"] if meta else None, "ready": meta is not None, "user": False})
-    for p in sorted((ws.root / "media").glob("*.json")):
+    for p in sorted(ws.shared.glob("*.json")):
         m = json.loads(p.read_text())
         if m.get("lib") and m.get("user"):
             items.append({"id": m["id"], "key": m.get("key", ""), "kind": m["lib"], "name": m["name"], "tags": m.get("tags", []),
@@ -82,7 +82,7 @@ def add_user(ws: Workspace, src: Path, name: str, kind: str, tags: list[str] | N
     """내 소리를 보관함에 올립니다. 음악이고 BPM을 안 적으면 박자를 찾아 채웁니다."""
     if kind not in KINDS:
         raise ValueError("효과음(sfx)이나 배경 음악(bgm)이어야 해요.")
-    meta = add_media(ws, src, name)
+    meta = add_media(ws, src, name, shared=True)
     if not meta["has_audio"]:
         remove_media(ws, meta["id"])
         raise ValueError("소리가 있는 파일만 올릴 수 있어요.")

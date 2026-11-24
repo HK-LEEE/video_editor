@@ -250,7 +250,7 @@ def test_transition_does_not_change_audio_mix_cache(api):
     a = c.post("/api/mix", json=body).content
     body["clips"][1]["transition"] = "fade"
     assert c.post("/api/mix", json=body).content == a
-    assert len(list((tmp / "ws" / "cache").glob("mix_*.wav"))) == 1
+    assert len(list((tmp / "ws" / "projects" / "기본-프로젝트" / "cache").glob("mix_*.wav"))) == 1
 
 
 def test_pip_overlays_small_window_over_full(api):
@@ -318,7 +318,7 @@ def test_subtitles_are_burned_in_only_during_their_cue(api):
     assert bright_pixels(mp4, 1.5) > 300                                      # 흰 글자
     assert bright_pixels(mp4, 2.2) == 0
     assert bright_pixels(mp4, 3.0) > 100
-    assert list((tmp / "ws" / "exports").glob("*.ass")) == []                  # 임시 파일은 지움
+    assert list((tmp / "ws" / "projects" / "기본-프로젝트" / "exports").glob("*.ass")) == []                  # 임시 파일은 지움
 
 
 def test_subtitle_style_color_outline_background_and_position(api):

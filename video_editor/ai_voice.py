@@ -106,6 +106,10 @@ class JobRunner:
         threading.Thread(target=go, daemon=True).start()
         return job
 
+    def busy(self) -> int:
+        """돌고 있거나 기다리는 작업 수 (프로젝트를 바꾸기 전에 확인합니다)."""
+        return sum(1 for j in self.jobs.values() if j.status in ("queued", "running"))
+
     def active(self, media: str, ref: str) -> Job | None:
         return next((j for j in self.jobs.values()
                      if j.media == media and j.ref == ref and j.status in ("queued", "running")), None)

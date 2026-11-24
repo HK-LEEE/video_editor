@@ -81,9 +81,21 @@ class BatchExportReq(BaseModel):
 
 
 def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
-    templates = Store(ws.root, "templates", Template)
-    endings = Store(ws.root, "endings", EndingPreset)
-    projects = ProjectStore(ws.root)
+    # 템플릿·엔딩 프리셋은 모든 프로젝트가 같이 쓰고, '보관한 프로젝트'는 프로젝트마다 따로 둡니다 (목록·일괄 작업은 전체를 봐요)
+    templates = Store(ws.home, "templates", Template)
+    endings = Store(ws.home, "endings", EndingPreset)
+
+    def store(w: Workspace = ws) -> ProjectStore:
+        return ProjectStore(w.root / "saved")
+
+    def locate(sid: str) -> Workspace:
+        """보관한 프로젝트가 들어 있는 작업 폴더 (열린 프로젝트부터 찾고, 없으면 다른 프로젝트들)."""
+        order = [ws.pid] + [p["id"] for p in ws.projects.list() if p["id"] != ws.pid]
+        for pid in order:
+            w = ws.at(pid)
+            if ProjectStore(w.root / "saved")._p(sid).exists():
+                return w
+        raise HTTPException(404, "보관한 프로젝트를 찾을 수 없어요.")
 
     def launch(work):
         job = jobs.submit("studio", uuid.uuid4().hex, work)
@@ -150,23 +162,23 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     # ---- Claude 문구
     @router.get("/settings")
     def get_settings():
-        return claude_copy.public_settings(ws.root)
+        return claude_copy.public_settings(ws.home)
 
     @router.put("/settings")
     def put_settings(b: SettingsReq):
         try:
-            return claude_copy.save_settings(ws.root, b.api_key, b.model, b.engine)
+            return claude_copy.save_settings(ws.home, b.api_key, b.model, b.engine)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
     @router.post("/ai/copy")
     def ai_copy(b: CopyReq):
-        st = claude_copy.public_settings(ws.root)
+        st = claude_copy.public_settings(ws.home)
         if not st["ready"]:
             raise HTTPException(503, st["help"])
 
         def work():
-            return claude_copy.generate(ws.root, [c.model_dump() for c in b.cues], b.duration, b.topic, b.model, b.note)
+            return claude_copy.generate(ws.home, [c.model_dump() for c in b.cues], b.duration, b.topic, b.model, b.note)
 
         return launch(work)
 
@@ -202,6 +214,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         for mid in (t.intro, t.outro):
             if mid:
                 ws.meta(mid)
+                ws.promote(mid)    # 템플릿은 모든 프로젝트에서 쓰니 인트로·아웃트로 파일도 공유 보관함에 둡니다
         if t.ending and endings.get(t.ending) is None:
             raise HTTPException(400, "없는 엔딩 프리셋이에요.")
         return templates.save(t).model_dump()
@@ -245,12 +258,12 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             raise HTTPException(404, "엔딩 프리셋을 찾을 수 없어요.")
         return apply_ending(ws, b.project, e).model_dump()
 
-    def _apply(p: Project, tid: str) -> Project:
+    def _apply(p: Project, tid: str, w: Workspace = ws) -> Project:
         t = templates.get(tid)
         if t is None:
             raise HTTPException(404, "템플릿을 찾을 수 없어요.")
         try:
-            return apply_template(ws, p, t, endings)
+            return apply_template(w, p, t, endings)
         except RuntimeError as e:
             raise HTTPException(500, str(e)) from e
 
@@ -262,7 +275,12 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     # ---- 보관한 프로젝트 · 일괄 적용
     @router.get("/projects")
     def list_projects():
-        return projects.list()
+        out = []
+        for info in ws.projects.list():
+            w = ws.at(info["id"])
+            for d in store(w).list():
+                out.append({**d, "workspace": info["id"], "workspace_name": info["name"], "current": info["id"] == ws.pid})
+        return sorted(out, key=lambda x: (not x["current"], -x["saved_at"]))
 
     @router.post("/projects")
     def save_project(b: dict):
@@ -270,16 +288,19 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             p = Project(**b["project"])
         except (KeyError, ValueError) as e:
             raise HTTPException(400, "프로젝트 모양이 올바르지 않아요.") from e
-        return projects.save(str(b.get("name", "")), p, b.get("id"))
+        sid = b.get("id")
+        w = locate(sid) if sid else ws        # 이미 있는 보관본을 덮어쓸 땐 그 보관본이 있던 프로젝트에 둡니다
+        return store(w).save(str(b.get("name", "")), p, sid)
 
     @router.get("/projects/{pid}")
     def get_project(pid: str):
-        d, p = projects.load(pid)
-        return {"id": d["id"], "name": d["name"], "project": p.model_dump()}
+        w = locate(pid)
+        d, p = store(w).load(pid)
+        return {"id": d["id"], "name": d["name"], "project": p.model_dump(), "workspace": w.pid, "current": w.pid == ws.pid}
 
     @router.delete("/projects/{pid}")
     def delete_project(pid: str):
-        projects.delete(pid)
+        store(locate(pid)).delete(pid)
         return {"ok": True}
 
     @router.post("/template/batch")
@@ -293,16 +314,17 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             results = []
             for pid in b.project_ids:
                 try:
-                    d, p = projects.load(pid)
-                    projects.save(d["name"], _apply(p, b.template_id), pid)
-                    results.append({"id": pid, "name": d["name"], "ok": True})
+                    w = locate(pid)       # 다른 프로젝트에 있는 보관본도 그 프로젝트의 미디어로 입힙니다
+                    d, p = store(w).load(pid)
+                    store(w).save(d["name"], _apply(p, b.template_id, w), pid)
+                    results.append({"id": pid, "name": d["name"], "ok": True, "workspace": w.pid})
                 except HTTPException as e:
                     results.append({"id": pid, "name": pid, "ok": False, "error": str(e.detail)})
             for mid in b.media_ids:
                 try:
                     _check_id(mid)
                     m = ws.meta(mid)
-                    saved = projects.save(f"{b.name_prefix}{Path(m['name']).stem}", _apply(project_from_media(ws, mid), b.template_id))
+                    saved = store().save(f"{b.name_prefix}{Path(m['name']).stem}", _apply(project_from_media(ws, mid), b.template_id))
                     results.append({"id": saved["id"], "name": saved["name"], "ok": True})
                 except HTTPException as e:
                     results.append({"id": mid, "name": mid, "ok": False, "error": str(e.detail)})
@@ -319,10 +341,12 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             results = []
             for pid in b.project_ids:
                 try:
-                    d, p = projects.load(pid)
+                    w = locate(pid)
+                    d, p = store(w).load(pid)
                     spec = None if b.format == "full" else shorts.ShortSpec(format=b.format)
-                    out = export_video(ws, p, spec)
-                    results.append({"id": pid, "name": d["name"], "ok": True, "url": f"/api/exports/{out.name}"})
+                    out = export_video(w, p, spec)
+                    results.append({"id": pid, "name": d["name"], "ok": True, "workspace": w.pid,
+                                    "url": f"/api/exports/{out.name}?project={w.pid}"})
                 except HTTPException as e:
                     results.append({"id": pid, "name": pid, "ok": False, "error": str(e.detail)})
                 except Exception as e:  # noqa: BLE001
