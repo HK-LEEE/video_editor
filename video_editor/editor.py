@@ -642,11 +642,8 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
                      f"enable='gte(t,{_f(start - ENABLE_EPS)})*lt(t,{_f(end - ENABLE_EPS)})'[{out}]")
         cur = out
 
-    if layers and min(c.start for c in layers) > 0.01:
-        # 첫 영상 클립이 0초보다 늦게 시작하면, 어떤 ffmpeg(overlay)에서는 처음 화면을 기다리다 멈춰요(CPU 100%).
-        # 0초부터 있는 투명한 얇은 층을 먼저 얹어서 겹치기가 바로 시작되게 합니다 (화면은 그대로예요).
-        parts.append(f"color=c=black@0:s={W}x{H}:r={FPS}:d=0.2,format=yuva420p[z0]")
-        overlay("z0", 0.0, 0.2)
+    first_start = min((c.start for c in layers), default=0.0)
+
     for c in layers:
         m = ws.meta(c.media)
         if c.layout == "pip" and m["kind"] == "audio":
@@ -684,12 +681,17 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         src = lbl("s")
         pos0 = _pip_xy(c) if c.layout == "pip" else ("0", "0")
 
+        # 가장 먼저 나오는 클립이 0초보다 늦게 시작하면, 겹치는 쪽 화면이 늦게 시작해 새 ffmpeg(9.x)에서 멈추는 일이 있어요(CPU 100%).
+        # 그 클립만 앞을 투명한 칸으로 채워 0초부터 시작하게 하면 (화면은 같고) 멈추지 않아요.
+        lead = s > 0.01 and abs(s - first_start) < 1e-6 and kind in ("none", "fade")
+        place = f"tpad=start_duration={_f(s)}:start_mode=add:color=black@0" if lead else f"setpts=PTS+{_tb(s)}"
+
         if kind == "none":
-            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_tb(s)}[{src}]")
+            parts.append(f"[{k}:v]{','.join(chain)},{place}[{src}]")
             overlay(src, s, e, *pos0)
         elif kind == "fade":
             chain.append(f"fade=t=in:st=0:d={_f(d)}:alpha=1")
-            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_tb(s)}[{src}]")
+            parts.append(f"[{k}:v]{','.join(chain)},{place}[{src}]")
             overlay(src, s, e, *pos0)
         elif kind == "dip":
             chain.append(f"fade=t=in:st={_f(d / 2)}:d={_f(d / 2)}:alpha=1")
