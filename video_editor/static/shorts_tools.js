@@ -471,8 +471,8 @@ async function batchExport() {
 }
 
 // ================================================================ 7 구독·좋아요 엔딩
-const E = { kinds: {}, defaults: {}, items: [], draft: null };
-async function loadEndings() { try { const r = await api('/endings'); E.kinds = r.kinds; E.defaults = r.defaults; E.items = r.items; if (!E.draft) E.draft = { name: '', ...r.defaults }; } catch (e) { say('eMsg', e.message, true); } if (cur === 'end') paintEnd(); }
+const E = { kinds: {}, defaults: {}, soft: {}, items: [], draft: null };
+async function loadEndings() { try { const r = await api('/endings'); E.kinds = r.kinds; E.defaults = r.defaults; E.soft = r.soft || {}; E.items = r.items; if (!E.draft) E.draft = { name: '', ...r.defaults }; } catch (e) { say('eMsg', e.message, true); } if (cur === 'end') paintEnd(); }
 function pageEnd() { body().innerHTML = '<div id="eBox"><p class="muted">불러오는 중…</p></div>'; E.draft ? paintEnd() : null; loadEndings(); }
 function paintEnd() {
   const d = E.draft; if (!d || !$('#eBox')) return;
@@ -480,16 +480,29 @@ function paintEnd() {
     <p class="muted">영상 맨 끝에 붙는 <b>구독·좋아요 애니메이션</b> (직접 그린 원본 디자인). 모양과 문구를 고쳐 프리셋으로 저장하고, 템플릿에 넣어서 여러 영상에 한 번에 붙여요.</p>
     <div class="card">
       <div class="row"><span class="muted">모양</span><select id="eKind">${Object.entries(E.kinds).map(([k, v]) => `<option value="${k}" ${k === d.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
+      <div class="row" id="eImgRow" style="${E.soft[d.kind] ? '' : 'display:none'}"><span class="muted">이미지</span><span id="eImgBox">${d.image ? `<img src="/api/endings/image/${esc(d.image)}" style="height:44px;border-radius:50%;vertical-align:middle">` : '<span class="muted">없음 (하트 장식이 들어가요)</span>'}</span><input type="file" id="eImgFile" accept="image/*" style="display:none"><button id="eImgBtn">🖼 이미지 고르기</button><button id="eImgDel">✕</button></div>
       <div class="row"><span class="muted">큰 글자</span><input type="text" id="eText" value="${esc(d.text)}" maxlength="30"></div>
       <div class="row"><span class="muted">작은 글자</span><input type="text" id="eSub" value="${esc(d.sub)}" maxlength="30"></div>
-      <div class="row"><span class="muted">포인트 색</span><input type="color" id="eAcc" value="${d.accent}"><span class="muted">배경</span><input type="color" id="eB1" value="${d.bg1}"><input type="color" id="eB2" value="${d.bg2}"><span class="muted">길이</span><input type="number" id="eDur" step="0.5" min="1.5" max="8" value="${d.duration}"><span class="muted">초</span></div>
+      <div class="row"><span class="muted">포인트 색</span><input type="color" id="eAcc" value="${d.accent}"><span class="muted">배경</span><input type="color" id="eB1" value="${d.bg1}"><input type="color" id="eB2" value="${d.bg2}"><span class="muted">글자색</span><input type="color" id="eTc" value="${d.text_color || '#5b3a29'}"><span class="muted">길이</span><input type="number" id="eDur" step="0.5" min="1.5" max="8" value="${d.duration}"><span class="muted">초</span></div>
       <div class="row"><button id="ePrev">▶ 미리보기</button><input type="text" id="eName" placeholder="프리셋 이름" value="${esc(d.name)}"><button id="eSave" class="primary">프리셋 저장</button></div>
       <label class="ck"><input type="checkbox" id="eGlobal" ${d.scope === 'global' ? 'checked' : ''}> 모든 워크스페이스 공용</label>
       <div id="ePrevBox"></div></div>
     <div id="eMsg" class="tmsg"></div>
     <h3>저장한 엔딩</h3><div id="eList">${E.items.length ? '' : '<p class="muted">아직 없어요.</p>'}</div>`;
-  const read = () => { d.kind = $('#eKind').value; d.text = $('#eText').value; d.sub = $('#eSub').value; d.accent = $('#eAcc').value; d.bg1 = $('#eB1').value; d.bg2 = $('#eB2').value; d.duration = +$('#eDur').value || 3; d.name = $('#eName').value; d.scope = $('#eGlobal').checked ? 'global' : 'space'; };
+  const read = () => { d.kind = $('#eKind').value; d.text = $('#eText').value; d.sub = $('#eSub').value; d.accent = $('#eAcc').value; d.bg1 = $('#eB1').value; d.bg2 = $('#eB2').value; d.text_color = $('#eTc').value; d.duration = +$('#eDur').value || 3; d.name = $('#eName').value; d.scope = $('#eGlobal').checked ? 'global' : 'space'; };
   root.querySelectorAll('#eBox input, #eBox select').forEach((i) => i.addEventListener('change', read));
+  $('#eKind').addEventListener('change', () => {   // 부드러운 모양을 고르면 어울리는 문구·색으로 채워 줘요
+    const sp = E.soft[$('#eKind').value];
+    if (sp) Object.assign(d, sp);
+    d.kind = $('#eKind').value; paintEnd();
+  });
+  $('#eImgBtn').onclick = () => $('#eImgFile').click();
+  $('#eImgDel').onclick = () => { read(); d.image = ''; paintEnd(); };
+  $('#eImgFile').onchange = async () => {
+    const f = $('#eImgFile').files[0]; if (!f) return; read(); say('eMsg', '이미지를 올리는 중…');
+    try { const fd = new FormData(); fd.append('file', f); const r = await api('/endings/image', { method: 'POST', body: fd }); d.image = r.image; say('eMsg', ''); paintEnd(); }
+    catch (e) { say('eMsg', e.message, true); }
+  };
   $('#ePrev').onclick = async () => {
     read(); say('eMsg', '미리보기를 만드는 중…');
     try { const r = await job('/endings/preview', { ...d, name: d.name || 'x' }); say('eMsg', ''); $('#ePrevBox').innerHTML = `<video src="${r.url}" controls autoplay loop muted playsinline></video>`; }

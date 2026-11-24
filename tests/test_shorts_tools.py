@@ -384,7 +384,8 @@ def test_batch_apply_to_saved_projects_and_media_then_export(api):
 def test_endings_and_templates_crud(api):
     c, tmp, ws = api
     kinds = c.get("/api/endings").json()
-    assert set(kinds["kinds"]) == {"subscribe", "heart", "bell", "thanks"}
+    assert set(kinds["kinds"]) == {"subscribe", "heart", "bell", "thanks", "soft_logo", "soft_card", "soft_hearts", "soft_text"}
+    assert set(kinds["soft"]) == {"soft_logo", "soft_card", "soft_hearts", "soft_text"}
     assert c.post("/api/endings", json={"name": "x", "kind": "nope"}).status_code == 400
     e = c.post("/api/endings", json={"name": "하트", "kind": "heart", "text": "좋아요"}).json()
     assert c.get("/api/endings").json()["items"][0]["text"] == "좋아요"
@@ -395,3 +396,20 @@ def test_endings_and_templates_crud(api):
     assert [x["id"] for x in c.get("/api/templates").json() if not x["builtin"]] == [t["id"]]
     c.delete(f"/api/templates/{t['id']}")
     assert [x for x in c.get("/api/templates").json() if not x["builtin"]] == []
+
+
+def test_soft_ending_with_image(api):
+    """부드러운 엔딩: 이미지를 올려 미리보기·프리셋 저장·영상에 붙이기까지."""
+    import io
+    from PIL import Image
+    c, tmp, ws = api
+    buf = io.BytesIO(); Image.new("RGB", (300, 200), "#f0a070").save(buf, "PNG")
+    assert c.post("/api/endings/image", files={"file": ("a.txt", b"nope")}).status_code == 400
+    up = c.post("/api/endings/image", files={"file": ("logo.png", buf.getvalue(), "image/png")}).json()
+    assert c.get(up["url"]).status_code == 200
+    for kind in ("soft_logo", "soft_card", "soft_hearts", "soft_text"):
+        prev = wait(c, c.post("/api/endings/preview", json={"name": "p", "kind": kind, "duration": 1.5, "image": up["image"]}).json()["job"])
+        assert prev["status"] == "done" and c.get(prev["result"]["url"]).status_code == 200
+    # 이미지 없이도 만들어져요
+    prev = wait(c, c.post("/api/endings/preview", json={"name": "p", "kind": "soft_logo", "duration": 1.5}).json()["job"])
+    assert prev["status"] == "done"

@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import beats as beats_mod
@@ -292,7 +293,31 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.get("/endings")
     def list_endings():
-        return {"kinds": endings_mod.KINDS, "defaults": endings_mod.DEFAULTS, "items": [e.model_dump() for e in endings.all()]}
+        return {"kinds": endings_mod.KINDS, "defaults": endings_mod.DEFAULTS, "soft": endings_mod.SOFT_PRESETS,
+                "items": [e.model_dump() for e in endings.all()]}
+
+    @router.post("/endings/image")
+    def ending_image(file: UploadFile = File(...)):
+        """엔딩에 넣을 이미지를 올립니다. 너무 크면 줄여서 워크스페이스의 ending_images 폴더에 둬요."""
+        from PIL import Image, UnidentifiedImageError
+        try:
+            im = Image.open(file.file); im.load()
+        except (UnidentifiedImageError, OSError) as e:
+            raise HTTPException(400, "이미지 파일(png·jpg 등)만 올릴 수 있어요.") from e
+        im = im.convert("RGBA")
+        if max(im.size) > 1600:
+            im.thumbnail((1600, 1600))
+        d = ws.root / "ending_images"; d.mkdir(exist_ok=True)
+        name = f"{uuid.uuid4().hex[:10]}.png"
+        im.save(d / name)
+        return {"image": name, "url": f"/api/endings/image/{name}"}
+
+    @router.get("/endings/image/{name}")
+    def ending_image_file(name: str):
+        f = ws.root / "ending_images" / Path(name).name
+        if not f.exists():
+            raise HTTPException(404, "이미지를 찾을 수 없어요.")
+        return FileResponse(f)
 
     @router.post("/endings")
     def save_ending(e: EndingPreset):
@@ -312,7 +337,11 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
         def work():
             name = f"ending_prev_{uuid.uuid4().hex[:8]}.mp4"
-            endings_mod.render(ws.root / "exports" / name, e.model_dump(exclude={"id", "name"}), 360, 640)
+            prm = e.model_dump(exclude={"id", "name"})
+            img = ws.root / "ending_images" / Path(prm.pop("image", "") or "_").name
+            if img.exists():
+                prm["image_path"] = str(img)
+            endings_mod.render(ws.root / "exports" / name, prm, 360, 640)
             return {"url": f"/api/exports/{name}"}
 
         return launch(work)
