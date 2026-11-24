@@ -1,10 +1,15 @@
 """워크스페이스·프로젝트 선택기의 서버 주소: 목록 · 만들기 · 열기 · 이름 바꾸기 · 복제 · 지우기 · 옮기기 · 편집 상태(프로젝트 파일) 저장."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import json
+import urllib.parse
+from pathlib import Path
+
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from .editor import Workspace
+from .editor import Workspace, link_path
 
 
 class NameReq(BaseModel):
@@ -36,7 +41,11 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         return sp.projects(space) if space else ws.projects
 
     def active_here(space: str, pid: str) -> bool:
-        return (not space or space == sp.active) and pid == ws.projects.active
+        return (not space or space == ws.sid) and pid == ws.pid
+
+    def here(space: str, pr) -> str:
+        """프로젝트를 안 정했을 때: 이 창이 보고 있는 프로젝트 (다른 워크스페이스면 거기서 마지막으로 연 것)."""
+        return ws.pid if not space or space == ws.sid else pr.active
 
     @router.get("/workspace")
     def workspace_info():
@@ -74,7 +83,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     def space_projects(sid: str):
         """표(자세히 보기)용: 그 워크스페이스의 프로젝트들 + 길이·클립·미디어·용량."""
         out = sp.projects(sid).listing(detail=True)
-        return {**out, "space": sid, "space_active": sid == sp.active}
+        return {**out, "space": sid, "space_active": sid == ws.sid}
 
     # ---- 프로젝트 (space 쿼리로 다른 워크스페이스의 프로젝트도 다룰 수 있어요. 비우면 열려 있는 워크스페이스)
     @router.post("/workspace/projects")
@@ -89,7 +98,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.post("/workspace/open")
     def open_project(b: OpenReq):
-        if jobs.busy() and not b.force and b.id != ws.projects.active:
+        if jobs.busy() and not b.force and b.id != ws.pid:
             raise HTTPException(409, BUSY)
         return ws.projects.open(b.id)
 
@@ -122,15 +131,61 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     @router.get("/workspace/timeline")
     def get_timeline(project: str = "", space: str = ""):
         pr = sp.projects(space) if space else ws.projects
-        return pr.load_timeline(project or pr.active) or {}
+        return pr.load_timeline(project or here(space, pr)) or {}
 
     @router.put("/workspace/timeline")
     def put_timeline(b: dict, project: str = "", space: str = ""):
         """화면이 보내는 워크스페이스·프로젝트 id에 저장해요 (다른 탭에서 바꿔도 엉뚱한 곳에 덮어쓰지 않게)."""
         pr = sp.projects(space) if space else ws.projects
-        pid = project or pr.active
+        pid = project or here(space, pr)
         pr.info(pid)
         if not isinstance(b.get("project"), dict):
             raise HTTPException(400, "편집 상태 모양이 올바르지 않아요.")
         pr.save_timeline(pid, {"project": b["project"], "ui": b.get("ui") if isinstance(b.get("ui"), dict) else {}})
         return {"ok": True}
+
+
+def add_page_routes(app: FastAPI, ws: Workspace, html_path: Path) -> None:
+    """편집기 화면 주소: /editor (마지막으로 연 프로젝트) · /editor/w/<워크스페이스> · /editor/w/<워크스페이스>/p/<프로젝트> (딥링크)."""
+    def render_editor(sid: str, pid: str, missing: str = "") -> HTMLResponse:
+        """워크스페이스 sid 의 프로젝트 pid 를 화면에 실어 보냅니다 — 브라우저가 프로젝트별로 편집 상태를 따로 기억하게요."""
+        pr = ws.spaces.projects(sid)
+        info = pr.info(pid)
+        sinfo = ws.spaces.info(sid)
+        ws_info = {"id": info["id"], "name": info["name"], "space": sinfo["id"], "space_name": sinfo["name"],
+                   "legacy": info.get("origin") == "migrated", "legacy2": sinfo.get("origin") == "migrated",
+                   "timeline": pr.load_timeline(info["id"]), "link": link_path(sinfo["id"], info["id"]), "missing": missing}
+        tag = "<script>window.__WS=" + json.dumps(ws_info, ensure_ascii=False).replace("<", "\\u003c") + ";</script>"
+        html = html_path.read_text(encoding="utf-8").replace("</head>", tag + "</head>", 1)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+    @app.get("/editor", include_in_schema=False)
+    def editor(missing: str = ""):
+        """주소 없이 들어오면 마지막으로 연 프로젝트를 보여 주고, 주소창은 그 프로젝트의 딥링크로 바꿔요(화면 쪽에서)."""
+        return render_editor(ws.sid, ws.pid, missing)
+
+
+    @app.get("/editor/w/{sid}", include_in_schema=False)
+    def editor_space(sid: str):
+        """워크스페이스 주소만 오면 그 워크스페이스에서 마지막으로 연 프로젝트로."""
+        try:
+            if ws.spaces.exists(sid):
+                return RedirectResponse(link_path(sid, ws.spaces.projects(sid).active), status_code=302)
+        except Exception:  # noqa: BLE001
+            pass
+        return RedirectResponse("/editor?missing=" + urllib.parse.quote(sid, safe=""), status_code=302)
+
+
+    @app.get("/editor/w/{sid}/p/{pid}", include_in_schema=False)
+    def editor_project(sid: str, pid: str):
+        """딥링크: 이 주소의 프로젝트를 엽니다. 없으면 안내와 함께 열려 있던 프로젝트(→ 목록)로."""
+        if not ws.resolve_link(f"/editor/w/{urllib.parse.quote(sid, safe='')}/p/{urllib.parse.quote(pid, safe='')}"):
+            return RedirectResponse("/editor?missing=" + urllib.parse.quote(f"{sid}/{pid}", safe=""), status_code=302)
+        # '마지막으로 연 곳'만 기억해 둡니다 (다른 창이 보던 프로젝트는 그 창의 주소가 정해서 영향 없어요)
+        sp = ws.spaces
+        if sp.projects(sid).active != pid:
+            sp.projects(sid).open(pid)
+        if sp.active != sid:
+            sp.open(sid)
+        return render_editor(sid, pid)

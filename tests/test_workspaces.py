@@ -3,6 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import urllib.parse
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -347,3 +349,57 @@ def test_space_project_table_and_operations_on_other_space(api):
     assert c.post("/api/workspace/spaces/open", json={"id": first, "project": second}).status_code == 200
     info = c.get("/api/workspace").json()
     assert info["space"] == first and info["active"] == second
+
+
+# ---------------------------------------------------------------- 딥링크
+
+from video_editor.editor import link_path
+
+
+def link_client(tmp_path):
+    from video_editor.workspace_routes import add_page_routes
+    app = FastAPI()
+    ws = Workspace(tmp_path / "ws")
+    app.include_router(make_router(ws))
+    html = tmp_path / "e.html"
+    html.write_text("<html><head></head><body></body></html>", encoding="utf-8")
+    add_page_routes(app, ws, html)
+    return TestClient(app, follow_redirects=False), ws
+
+
+def test_deeplink_pages_and_missing(tmp_path):
+    c, ws = link_client(tmp_path)
+    sid, pid = ws.sid, ws.pid
+    r = c.get(f"/editor/w/{sid}/p/{pid}")
+    assert r.status_code == 200 and f'"id": "{pid}"' in r.text and f'"space": "{sid}"' in r.text
+    assert c.get("/editor").status_code == 200
+    r = c.get(f"/editor/w/{sid}")                                                    # 워크스페이스만 → 마지막 프로젝트
+    assert r.status_code == 302 and urllib.parse.unquote(r.headers["location"]) == f"/editor/w/{sid}/p/{pid}"
+    for bad in (f"/editor/w/{sid}/p/없는것", "/editor/w/없는곳/p/x"):
+        r = c.get(bad)
+        assert r.status_code == 302 and r.headers["location"].startswith("/editor?missing=")
+    assert c.get("/editor/w/없는곳").headers["location"].startswith("/editor?missing=")
+    assert '"missing": "x/y"' in c.get("/editor?missing=x%2Fy").text
+
+
+def test_deeplink_binds_each_window_to_its_project(tmp_path):
+    """창(Referer)마다 다른 프로젝트를 동시에 열어도 서로 섞이지 않고, 저장도 엉뚱한 곳에 안 들어가요."""
+    c, ws = link_client(tmp_path)
+    sid = ws.sid
+    a = ws.pid
+    b = c.post("/api/workspace/projects?open=false", json={"name": "둘째"}).json()["id"]
+    ra = {"referer": "http://x" + link_path(sid, a)}
+    rb = {"referer": "http://x" + link_path(sid, b)}
+    voice = make_voice(tmp_path / "a.wav")
+    r = c.post("/api/media", files={"file": (voice.name, voice.read_bytes())}, headers=rb)       # B 창에서 올린 파일은 B 프로젝트로
+    assert r.status_code == 200
+    only = lambda h: [m["id"] for m in c.get("/api/media", headers=h).json() if not m.get("lib")]
+    assert only(rb) == [r.json()["id"]] and only(ra) == []
+    c.put("/api/workspace/timeline", json={"project": {"tag": "A"}}, headers=ra)
+    c.put("/api/workspace/timeline", json={"project": {"tag": "B"}}, headers=rb)
+    assert ws.projects.load_timeline(a)["project"]["tag"] == "A"
+    assert ws.projects.load_timeline(b)["project"]["tag"] == "B"
+    assert c.get("/api/workspace").json()["active"] == a                              # 전역 '열린 프로젝트'는 그대로
+    # 없는 링크가 Referer 로 오면 묶지 않고 열려 있는 프로젝트로
+    c.put("/api/workspace/timeline", json={"project": {"tag": "C"}}, headers={"referer": "http://x" + link_path(sid, "없음")})
+    assert ws.projects.load_timeline(a)["project"]["tag"] == "C"

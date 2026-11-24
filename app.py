@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 import os
 import tempfile
 import time
@@ -18,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from video_editor import VoiceSettings, load_audio, load_presets, process, save_wav
 from video_editor import library
 from video_editor.editor import Workspace, make_router
+from video_editor.workspace_routes import add_page_routes
 
 PRESETS = load_presets()
 CUSTOM = "custom"
@@ -93,18 +95,7 @@ app = FastAPI(title="video_editor")
 app.include_router(make_router(WORKSPACE))
 
 
-@app.get("/editor", include_in_schema=False)
-def editor():
-    """열린 프로젝트(이름·id·마지막 편집 상태)를 화면에 같이 실어 보냅니다 — 브라우저가 프로젝트별로 편집 상태를 따로 기억하게요."""
-    pr = WORKSPACE.projects
-    info = pr.info(WORKSPACE.pid)
-    sinfo = WORKSPACE.spaces.info(WORKSPACE.sid)
-    ws_info = {"id": info["id"], "name": info["name"], "space": sinfo["id"], "space_name": sinfo["name"],
-               "legacy": info.get("origin") == "migrated", "legacy2": sinfo.get("origin") == "migrated",
-               "timeline": pr.load_timeline(info["id"])}
-    tag = "<script>window.__WS=" + json.dumps(ws_info, ensure_ascii=False).replace("<", "\\u003c") + ";</script>"
-    html = EDITOR_HTML.read_text(encoding="utf-8").replace("</head>", tag + "</head>", 1)
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+add_page_routes(app, WORKSPACE, EDITOR_HTML)
 
 
 @app.get("/editor-static/{name}", include_in_schema=False)   # 편집기 화면 스크립트 (정해 둔 파일만)

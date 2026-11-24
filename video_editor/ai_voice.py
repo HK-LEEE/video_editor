@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import contextvars
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -92,11 +93,13 @@ class JobRunner:
         job = Job(uuid.uuid4().hex[:12], media, ref)
         self.jobs[job.id] = job
 
+        ctx = contextvars.copy_context()   # 요청 때 묶인 워크스페이스·프로젝트를 일꾼 스레드도 그대로 써요
+
         def go():
             with self._lock:
                 job.status = "running"
                 try:
-                    res = work()
+                    res = ctx.run(work)
                     if isinstance(res, dict):
                         job.result = res
                     job.status = "done"

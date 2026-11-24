@@ -18,6 +18,14 @@ const api = async (path, opt = {}) => {
   if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : '요청이 올바르지 않아요.'); e.status = r.status; throw e; }
   return j;
 };
+const linkPath = (space, pid) => `/editor/w/${encodeURIComponent(space)}/p/${encodeURIComponent(pid)}`;
+const linkUrl = (space, pid) => location.origin + linkPath(space, pid);
+const go = (url) => { location.assign(url); return new Promise(() => {}); };      // 주소를 바꿔 이동 (뒤로 가기로 돌아올 수 있어요)
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch {}
+  const a = document.createElement('textarea'); a.value = t; a.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(a); a.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {} a.remove(); return ok;
+}
 const q = (space) => (space ? `?space=${encodeURIComponent(space)}` : '');
 
 const css = document.createElement('style');
@@ -68,7 +76,7 @@ dlg.innerHTML = `
     </div>
     <div class="wr">
       <div class="bar"><span class="t" id="prHead">프로젝트</span>
-        <button id="prOpen" class="primary">열기</button><button id="prNew">+ 새 프로젝트</button><button id="prRen">이름 바꾸기</button><button id="prDup">복제</button><button id="prMv">옮기기…</button><button id="prDel">지우기</button></div>
+        <button id="prOpen" class="primary">열기</button><button id="prLink" title="이 프로젝트의 딥링크 주소를 복사해요">링크 복사</button><button id="prNew">+ 새 프로젝트</button><button id="prRen">이름 바꾸기</button><button id="prDup">복제</button><button id="prMv">옮기기…</button><button id="prDel">지우기</button></div>
       <div class="tbl"><table><thead><tr id="prHeadRow"></tr></thead><tbody id="prBody"></tbody></table><div class="empty" id="prEmpty" hidden>프로젝트가 없어요. '+ 새 프로젝트'를 눌러 만들어 보세요.</div></div>
     </div>
   </div>
@@ -93,19 +101,24 @@ const say = (msg, err) => { $('wsMsg').textContent = msg || ''; $('wsMsg').class
 const viewSpace = () => S.spaces.find((x) => x.id === S.view) || {};
 const selRow = () => S.rows.find((p) => p.id === S.sel);
 
-const reload = () => location.reload();
+const reload = () => go('/editor');   // 지금 보던 프로젝트가 사라졌을 때: 마지막으로 연 프로젝트로
 async function guarded(fn) {   // 오래 걸리는 작업이 돌고 있으면 물어보고, 그래도 하면 강제로
   try { return await fn(false); } catch (e) {
     if (e.status === 409 && e.message.includes('강제로') && confirm('오래 걸리는 작업(AI 변환·받아쓰기 등)이 아직 돌고 있어요.\n\n그래도 바꿀까요? (돌고 있는 작업은 이전 프로젝트가 아니라 새로 연 프로젝트 폴더에 결과를 남길 수 있어요)')) return fn(true);
     say(e.message, true);
   }
 }
-const openProject = (pid, space = S.view) => guarded((force) => api('/workspace/spaces/open', { json: { id: space, project: pid, force } }).then(reload));
-const openSpace = (sid) => guarded((force) => api('/workspace/spaces/open', { json: { id: sid, force } }).then(reload));
+const openProject = (pid, space = S.view) => guarded((force) => api('/workspace/spaces/open', { json: { id: space, project: pid, force } }).then(() => go(linkPath(space, pid))));
+const openSpace = (sid) => guarded((force) => api('/workspace/spaces/open', { json: { id: sid, force } }).then(() => go('/editor/w/' + encodeURIComponent(sid))));
+const openNewTab = (pid, space = S.view) => { window.open(linkPath(space, pid), '_blank', 'noopener'); say('새 탭에서 열었어요. 같은 프로젝트를 두 곳에서 열면 저장이 서로 덮어쓸 수 있으니 다른 프로젝트를 열어 쓰세요.'); };
+async function copyLink(p = selRow()) {
+  if (!p) return; const ok = await copyText(linkUrl(S.view, p.id));
+  say(ok ? `'${p.name}' 링크를 복사했어요.\n${linkUrl(S.view, p.id)}` : `복사하지 못했어요. 직접 복사해 주세요:\n${linkUrl(S.view, p.id)}`, !ok);
+}
 
 async function loadSpaces() {
   const w = await api('/workspace');
-  S.spaces = w.spaces; S.active = w.space;
+  S.spaces = w.spaces; S.active = WSI.space; S.spaces.forEach((x) => { x.active = x.id === WSI.space; });   // '열려 있음'은 이 창 기준 (창마다 다른 프로젝트를 볼 수 있어요)
   if (!S.spaces.some((x) => x.id === S.view)) S.view = S.active;
   paintSpaces();
   await loadRows();
@@ -130,8 +143,8 @@ async function loadRows() {
   try { r = await api(`/workspace/spaces/${encodeURIComponent(view)}/projects`); } catch (e) { return say(e.message, true); }
   if (view !== S.view) return;                   // 그 사이 다른 워크스페이스로 바뀌었으면 늦게 온 답은 버립니다
   S.rows = r.projects;
-  S.activeProject = r.active;
-  S.rows.forEach((p) => { p.active = p.id === r.active; });
+  S.activeProject = WSI.id;
+  S.rows.forEach((p) => { p.active = p.id === WSI.id; });
   S.rowsView = view;
   S.sel = S.rows.some((p) => p.id === keep) ? keep : (S.rows.find((p) => p.active) || S.rows[0] || {}).id || null;
   paintRows();
@@ -151,7 +164,7 @@ function paintRows() {
   });
   $('wsCount').textContent = `항목 ${rows.length}개${S.sel ? ' · 1개 선택' : ''}`;
   const has = !!selRow();
-  ['prOpen', 'prRen', 'prDup', 'prMv', 'prDel'].forEach((id) => ($(id).disabled = !has));
+  ['prOpen', 'prLink', 'prRen', 'prDup', 'prMv', 'prDel'].forEach((id) => ($(id).disabled = !has));
   $('prMv').disabled = !has || S.spaces.length < 2;
 }
 
@@ -159,7 +172,7 @@ function paintRows() {
 async function act(fn) { try { await fn(); } catch (e) { say(e.message, true); } }
 async function spNewAct() {
   const n = prompt('새 워크스페이스 이름', ''); if (n === null) return;
-  await act(async () => { await guarded((force) => api('/workspace/spaces', { json: { name: n.trim() || '새 워크스페이스' } }).then(reload)); });
+  await act(async () => { await guarded((force) => api('/workspace/spaces', { json: { name: n.trim() || '새 워크스페이스' } }).then((r) => go('/editor/w/' + encodeURIComponent(r.id)))); });
 }
 async function spRenAct(s = viewSpace()) {
   const n = prompt('새 이름', s.name); if (!n || !n.trim() || n.trim() === s.name) return;
@@ -184,7 +197,7 @@ async function prDupAct(p = selRow()) {
 }
 async function prMvAct(target, p = selRow()) {
   if (!p || !target) return; say('옮기는 중…');
-  await act(async () => { await guarded((force) => api(`/workspace/projects/${p.id}/move${q(S.view)}`, { json: { space: target.id } })); if (p.active && S.viewActive) return reload(); say(`'${p.name}'을 '${target.name}'(으)로 옮겼어요.`); await loadSpaces(); });
+  await act(async () => { await guarded((force) => api(`/workspace/projects/${p.id}/move${q(S.view)}`, { json: { space: target.id } })); if (p.active && S.viewActive) return go(linkPath(target.id, p.id)); say(`'${p.name}'을 '${target.name}'(으)로 옮겼어요.`); await loadSpaces(); });
 }
 async function prDelAct(p = selRow()) {
   if (!p) return;
@@ -215,7 +228,7 @@ const closeMenu = () => { const m = $('wsMenu'); if (m) m.remove(); };
 dlg.addEventListener('click', closeMenu);
 const projMenu = () => {
   const p = selRow(), others = S.spaces.filter((x) => x.id !== S.view);
-  return [{ label: '열기', fn: () => openProject(p.id) }, '-', { label: '이름 바꾸기  (F2)', fn: () => prRenAct(p) }, { label: '복제', fn: () => prDupAct(p) },
+  return [{ label: '열기', fn: () => openProject(p.id) }, { label: '새 탭에서 열기', fn: () => openNewTab(p.id) }, { label: '링크 복사', fn: () => copyLink(p) }, '-', { label: '이름 바꾸기  (F2)', fn: () => prRenAct(p) }, { label: '복제', fn: () => prDupAct(p) },
     ...(others.length ? ['-', { head: '다른 워크스페이스로 옮기기' }, ...others.map((o) => ({ label: `→ ${o.name}`, fn: () => prMvAct(o, p) }))] : []),
     '-', { label: '지우기  (Delete)', fn: () => prDelAct(p) }];
 };
@@ -228,7 +241,7 @@ spaceBtn.onclick = show; projBtn.onclick = show;
 $('wsClose').onclick = () => dlg.close();
 dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
 $('spNew').onclick = spNewAct; $('spRen').onclick = () => spRenAct(); $('spDel').onclick = () => spDelAct(); $('spOpen').onclick = () => openSpace(S.view);
-$('prOpen').onclick = () => selRow() && openProject(S.sel); $('prNew').onclick = prNewAct; $('prRen').onclick = () => prRenAct(); $('prDup').onclick = () => prDupAct();
+$('prOpen').onclick = () => selRow() && openProject(S.sel); $('prLink').onclick = () => copyLink(); $('prNew').onclick = prNewAct; $('prRen').onclick = () => prRenAct(); $('prDup').onclick = () => prDupAct();
 $('prDel').onclick = () => prDelAct();
 $('prMv').onclick = () => { const p = selRow(); if (!p) return; const t = pickSpace(p); if (t) prMvAct(t, p); };
 dlg.addEventListener('keydown', (e) => {
@@ -243,16 +256,40 @@ dlg.addEventListener('keydown', (e) => {
   else if (e.key === 'Delete' && S.sel) { e.preventDefault(); prDelAct(); }
 });
 
-// 다른 탭에서 워크스페이스·프로젝트를 바꿨으면 알려 줘요 (이 탭의 보관함이 다른 프로젝트 것이 되어 버리니까요)
-async function checkActive() {
-  try {
-    const w = await api('/workspace');
-    if ((w.active !== WSI.id || w.space !== WSI.space) && !$('projBanner')) {
-      const b = document.createElement('div'); b.id = 'projBanner';
-      b.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2000;background:var(--accent);color:#1a1208;padding:8px 14px;border-radius:9px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px #0008';
-      b.textContent = '다른 창에서 프로젝트를 바꿨어요 — 눌러서 새로고침'; b.onclick = reload; document.body.appendChild(b);
-    }
-  } catch {}
+// ---- 딥링크: 주소창 · 탭 · 같은 프로젝트를 여러 창에서 여는 경우
+const here = linkPath(WSI.space, WSI.id);
+if (WSI.id && location.pathname !== here) history.replaceState(null, '', here + location.search + location.hash);   // 주소 없이 열었으면 이 프로젝트의 주소로 바꿔 둬요
+window.__wsPicker.link = () => linkUrl(WSI.space, WSI.id);
+window.__wsPicker.copyLink = async () => copyText(linkUrl(WSI.space, WSI.id));
+
+function banner(id, text, onclick) {
+  if ($(id)) return;
+  const b = document.createElement('div'); b.id = id;
+  b.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2000;background:var(--accent);color:#1a1208;padding:8px 14px;border-radius:9px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px #0008;max-width:92vw';
+  b.textContent = text; b.onclick = () => { b.remove(); onclick && onclick(); }; document.body.appendChild(b);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkActive(); });
+if (WSI.missing) {   // 없는 링크로 들어왔어요 → 알려 주고 목록을 보여 줘요
+  banner('linkMissing', `'${WSI.missing}' 프로젝트를 찾을 수 없어요 (지웠거나 옮겼을 수 있어요). 목록에서 골라 주세요.`);
+  history.replaceState(null, '', here);
+  setTimeout(show, 0);
+}
+try {   // 같은 프로젝트가 다른 창에도 열려 있으면 알려 줘요 (두 곳에서 고치면 나중 저장이 앞선 저장을 덮어써요)
+  const ch = new BroadcastChannel('video_editor.open'), me = Math.random().toString(36).slice(2), key = WSI.space + '/' + WSI.id, t0 = Date.now();
+  const warn = () => banner('dupTab', '같은 프로젝트가 다른 창에도 열려 있어요. 한 곳에서만 고치지 않으면 저장이 서로 덮어쓸 수 있어요. (누르면 닫혀요)');
+  ch.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.key !== key || m.from === me) return;
+    if (m.t === 'hello') { ch.postMessage({ t: 'here', key, from: me }); warn(); } else if (m.t === 'here') warn();
+  };
+  ch.postMessage({ t: 'hello', key, from: me });
+} catch {}
+
+// 오른쪽 도구 탭 (?tab=edit|ai|voice|join|shorts) — 주소에 같이 실려요
+const TABS = { edit: 'dkTabI', ai: 'dkTabA', voice: 'dkTabV', join: 'dkTabJ', shorts: 'dkTabT' };
+const tabOf = new URLSearchParams(location.search).get('tab');
+if (TABS[tabOf] && $(TABS[tabOf])) setTimeout(() => $(TABS[tabOf]).click(), 0);
+for (const [name, id] of Object.entries(TABS)) {
+  const b = $(id); if (!b) continue;
+  b.addEventListener('click', () => { const u = new URL(location.href); if (name === 'edit') u.searchParams.delete('tab'); else u.searchParams.set('tab', name); history.replaceState(null, '', u); });
+}
 })();

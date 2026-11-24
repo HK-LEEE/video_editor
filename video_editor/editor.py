@@ -16,11 +16,14 @@
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -28,7 +31,7 @@ from typing import Literal
 import numpy as np
 import pedalboard as pb
 import soundfile as sf
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -54,6 +57,17 @@ PEAKS_PER_S = 100
 
 # ================================================================ 보관함
 
+# 요청마다 달라지는 '이 창이 보고 있는 워크스페이스·프로젝트' (딥링크 /editor/w/<워크스페이스>/p/<프로젝트> 에서 온 요청이 여기 묶여요).
+# 안 묶여 있으면 예전처럼 '열려 있는' 것을 써요.
+BOUND: contextvars.ContextVar = contextvars.ContextVar("workspace_bound", default=None)
+_LINK = re.compile(r"^/editor/w/([^/?#]+)/p/([^/?#]+)")
+
+
+def link_path(sid: str, pid: str, tab: str = "") -> str:
+    q = "?tab=" + tab if tab else ""
+    return f"/editor/w/{urllib.parse.quote(sid, safe='')}/p/{urllib.parse.quote(pid, safe='')}{q}"
+
+
 class Workspace:
     """작업 폴더: 워크스페이스 > 프로젝트. 프로젝트별 파일(media·cache·exports…)은 `root`(지금 열린 프로젝트 폴더) 아래에,
     워크스페이스 전용 자료(템플릿·엔딩 프리셋, 내가 올린 효과음·음악)는 `space_dir` 아래에,
@@ -70,7 +84,8 @@ class Workspace:
 
     @property
     def sid(self) -> str:
-        return self._sid or self.spaces.active
+        b = BOUND.get()
+        return self._sid or (b[0] if b else None) or self.spaces.active
 
     @property
     def space_dir(self) -> Path:
@@ -89,11 +104,25 @@ class Workspace:
 
     @property
     def pid(self) -> str:
-        return self._pid or self.projects.active
+        b = BOUND.get()
+        return self._pid or (b[1] if b and b[0] == self.sid else None) or self.projects.active
 
     @property
     def root(self) -> Path:
         return self.projects.dir(self.pid)
+
+    def resolve_link(self, referer: str) -> tuple[str, str] | None:
+        """Referer(=딥링크 주소를 보고 있는 창)에서 (워크스페이스, 프로젝트)를 읽어요. 없는 곳이면 None."""
+        m = _LINK.match(urllib.parse.urlparse(referer or "").path)
+        if not m:
+            return None
+        sid, pid = (urllib.parse.unquote(g) for g in m.groups())
+        try:
+            if self.spaces.exists(sid) and self.spaces.projects(sid).exists(pid):
+                return sid, pid
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     def at(self, pid: str) -> "Workspace":
         """같은 워크스페이스 안의 다른 프로젝트에 고정된 작업 폴더."""
@@ -774,7 +803,11 @@ class AIConvert(BaseModel):
 
 
 def make_router(ws: Workspace) -> APIRouter:
-    router = APIRouter(prefix="/api")
+    async def bind(request: Request):
+        """이 요청을 보낸 창의 딥링크(Referer)가 가리키는 프로젝트에 묶어요 — 창마다 다른 프로젝트를 동시에 열 수 있게요."""
+        BOUND.set(ws.resolve_link(request.headers.get("referer", "")))
+
+    router = APIRouter(prefix="/api", dependencies=[Depends(bind)])
 
     @router.get("/voices")
     def voices():
