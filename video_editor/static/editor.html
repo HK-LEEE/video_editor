@@ -87,6 +87,19 @@
   #drop.over { border-color: var(--accent); color: var(--accent); background: #ff9a3c14; }
   .item { display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: var(--r); cursor: grab; user-select: none; border: 1px solid transparent; }
   .item:hover { background: var(--panel2); }
+  .item.msel { background: #ff9a3c22; border-color: var(--accent); }
+  #binSelBar { display: none; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 12px; }
+  #binSelBar.on { display: flex; }
+  #mediaList:focus { outline: none; }
+  #joinDlg #jSec1.over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  #joinDlg .jit[draggable=true] { cursor: grab; }
+  #joinDlg .jit.dropbefore { box-shadow: 0 -2px 0 var(--accent); }
+  #joinDlg .jit.dragging { opacity: .4; }
+  #joinDlg #jBinList { max-height: 190px; overflow: auto; margin: 6px 0; }
+  #joinDlg #jBinList label { display: flex; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 5px; }
+  #joinDlg #jBinList label:hover { background: var(--panel2); }
+  #saveSt { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  #saveSt.err { color: #ff7b7b; }
   .item.cur { background: var(--panel2); border-color: var(--line2); }
   .item .thumb { width: 34px; height: 26px; border-radius: 5px; display: grid; place-items: center; flex: none; font-size: 14px; background-size: cover; background-position: center; }
   .item .thumb .ic { width: 15px; height: 15px; color: #fff; stroke-width: 1.8; filter: drop-shadow(0 1px 2px #000a); }
@@ -387,6 +400,7 @@
   <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">AI 도구</span></button>
   <button id="chatBtn" title="한국어로 말하듯 편집 지시 (앞 3초 잘라, '음' 다 지워, BGM 줄여…) — Claude가 할 일을 먼저 보여주고 확인하면 적용해요"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">글로 편집 채팅</span></button>
   <span id="status"></span>
+  <span id="saveSt" title="편집 내용은 이 브라우저와 서버의 프로젝트 파일에 자동으로 저장돼요 (⌘S: 지금 바로 저장)"></span>
   <button id="keysBtn" class="ib" title="단축키 (?)"><svg class="ic"><use href="#i-kbd"/></svg></button>
   <button id="exportBtn" class="primary"><svg class="ic"><use href="#i-down"/></svg>내보내기 (mp4)</button>
   <a href="/">간단 변조기 →</a>
@@ -398,8 +412,9 @@
     <div class="pb">
       <div id="drop">영상·음악·효과음 파일을<br>여기로 끌어 놓거나 눌러서 추가</div>
       <input type="file" id="fileIn" multiple accept="video/*,audio/*" hidden>
-      <div id="mediaList"></div>
-      <p class="muted" style="margin-top:10px">한 번 누르면 <b>소스</b> 모니터에서 미리 봐요. 타임라인 트랙으로 끌어 놓거나 두 번 누르면 재생 위치에 들어갑니다.</p>
+      <div id="binSelBar"><button id="binAll">전체 선택</button><button id="binNone">해제</button><span id="binSelN" class="muted"></span><button id="binToJoin" class="primary" title="선택한 영상을 자동 이어붙이기에 한 번에 담아요">이어붙이기에 담기</button></div>
+      <div id="mediaList" tabindex="0"></div>
+      <p class="muted" style="margin-top:10px">한 번 누르면 <b>소스</b> 모니터에서 미리 봐요. <b>⌘/Ctrl 클릭</b>은 여러 개 고르기, <b>Shift 클릭</b>은 범위 고르기, <b>⌘A</b>는 전체 선택. 타임라인 트랙으로 끌어 놓거나 두 번 누르면 재생 위치에 들어갑니다.</p>
     </div>
   </section>
   <div id="hs1" class="split" role="separator" aria-orientation="vertical"></div>
@@ -451,9 +466,15 @@
       <div id="joinDlg" class="dockpane">
         <h3>🔗 자동 이어 붙이기</h3>
         <p class="muted">짧은 영상 여러 개를 순서대로 담으면, 앞뒤의 이상한 프레임(검은 화면·멈춘 화면·깜빡임)을 잘라내고, 이음새마다 색·밝기와 소리 크기를 맞추고, 가장 어색하지 않은 연결(하드컷·디졸브·AI 모핑·암전)을 골라 줘요. 이음새마다 미리 보고 직접 바꿀 수도 있어요.</p>
-        <section><h3>1. 이어 붙일 영상 (위에서부터 순서대로)</h3>
-          <div class="row"><button id="jTl" title="타임라인의 영상 클립을 시간순으로 담아요. 붙이면 그 클립들을 대신해요 (⌘Z로 되돌리기)">타임라인의 영상 담기</button><button id="jUp">📁 파일 올려서 담기</button></div>
-          <div class="row" style="margin-top:6px"><select id="jBin" style="flex:1;min-width:0"></select><button id="jBinAdd">＋ 담기</button></div>
+        <section id="jSec1"><h3>1. 이어 붙일 영상 (위에서부터 순서대로)</h3>
+          <p class="muted" style="margin:0 0 6px">보관함의 영상이나 Finder의 파일·폴더를 이 칸에 <b>끌어 놓으면</b> 한꺼번에 담겨요.</p>
+          <div class="row"><button id="jTl" title="타임라인의 영상 클립을 시간순으로 담아요. 붙이면 그 클립들을 대신해요 (⌘Z로 되돌리기)">타임라인의 영상 담기</button><button id="jUp">📁 파일 여러 개 담기</button><button id="jDir">📂 폴더째 담기</button></div>
+          <details id="jBinBox" style="margin-top:6px" open><summary>보관함에서 여러 개 고르기</summary>
+            <div class="row" style="margin-top:6px"><button id="jAll">전체 선택</button><button id="jNone">해제</button>
+              <select id="jSort" title="보관함 목록 정렬"><option value="name">이름순</option><option value="added">추가순</option></select></div>
+            <div id="jBinList"></div>
+            <div class="row"><button id="jBinAdd" class="primary">선택한 영상 담기</button></div></details>
+          <div class="row" style="margin-top:8px"><span class="muted">담은 목록 정렬</span><button id="jSortName">이름순</button><button id="jSortAdded">추가순</button><button id="jRev">거꾸로</button><button id="jClear">모두 비우기</button></div>
           <div id="jList"></div>
           <p class="muted" id="jEmpty">아직 담은 영상이 없어요.</p>
         </section>
@@ -674,12 +695,42 @@ try {
   const saved = raw ? JSON.parse(raw) : WSI.timeline;
   if (saved && saved.project) { project = normalize(saved.project); ui = { ...ui, ...saved.ui }; }
 } catch {}
-let srvTimer = null;
+let srvTimer = null, saveVer = 0, savedVer = 0, saveFail = false;
+const timelineUrl = () => '/api/workspace/timeline?' + (WSI.space ? 'space=' + encodeURIComponent(WSI.space) + '&' : '') + 'project=' + encodeURIComponent(WSI.id);
+function setSaveSt(text, err) { const el = document.getElementById('saveSt'); if (el) { el.textContent = text; el.classList.toggle('err', !!err); } }
+const hhmm = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+// 서버의 프로젝트 파일(timeline.json)에 보냄. 보내는 사이에 또 고쳤으면 그 편집분은 다음 저장이 맡아요.
+async function pushServer(keepalive = false) {
+  clearTimeout(srvTimer); srvTimer = null;
+  const ver = saveVer; setSaveSt('저장 중…');
+  try {
+    const r = await fetch(timelineUrl(), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, ui }), keepalive });
+    if (!r.ok) throw new Error(r.status);
+    savedVer = Math.max(savedVer, ver); saveFail = false;
+    if (savedVer === saveVer && !srvTimer) setSaveSt('✓ 저장됨 ' + hhmm());
+    return true;
+  } catch (e) {
+    saveFail = true; setSaveSt('⚠ 서버 저장 실패 (이 브라우저에는 저장됨) — 곧 다시 시도해요', true);
+    clearTimeout(srvTimer); srvTimer = setTimeout(() => pushServer(), 5000);
+    return false;
+  }
+}
 const save = () => {
   try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {}
-  clearTimeout(srvTimer);   // 서버의 프로젝트 파일에도 (잠깐 모아서) 저장해요
-  srvTimer = setTimeout(() => { fetch('/api/workspace/timeline?space=' + encodeURIComponent(WSI.space) + '&project=' + encodeURIComponent(WSI.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, ui }) }).catch(() => {}); }, 1200);
+  saveVer++; setSaveSt('저장 중…');
+  clearTimeout(srvTimer); srvTimer = setTimeout(() => pushServer(), 1200);   // 잠깐 모아서 서버에도 저장
 };
+async function saveNow() {   // ⌘S
+  try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {}
+  const ok = await pushServer();
+  status(ok ? '지금 저장했어요.' : '서버에 저장하지 못했어요. 이 브라우저에는 저장돼 있어요.', !ok);
+}
+// 창을 닫거나 다른 곳으로 가기 직전에 아직 못 보낸 편집분을 바로 보내요
+const flushOnLeave = () => { if (srvTimer) pushServer(true); };
+setSaveSt('자동 저장 켜짐');
+window.addEventListener('pagehide', flushOnLeave);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushOnLeave(); });
+document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); } }, true);
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
 const subLanes = () => Math.max(1, ...project.subtitles.map((c) => (c.lane || 0) + 1));
@@ -733,8 +784,36 @@ async function loadMedia() {
   renderBin(); afterChange();
 }
 const icon = (m) => (m.kind === 'video' ? [ICON('film'), '#4b3f9a'] : m.recorded ? [ICON('mic'), '#8a4f16'] : [ICON('wave'), '#1f6b50']);
+let binSel = new Set(), binLast = null, binOrder = [];
+function renderBinBar() {
+  const n = binSel.size; $('binSelBar').classList.toggle('on', n > 0);
+  $('binSelN').textContent = `${n}개 선택`;
+  $('binToJoin').textContent = `이어붙이기에 ${n}개 담기`;
+  document.querySelectorAll('#mediaList .item').forEach((el) => el.classList.toggle('msel', binSel.has(el.dataset.mid)));
+}
+function binClick(e, id) {
+  if (e.metaKey || e.ctrlKey) { binSel.has(id) ? binSel.delete(id) : binSel.add(id); binLast = id; }
+  else if (e.shiftKey && binLast && binOrder.includes(binLast)) {
+    const a = binOrder.indexOf(binLast), b = binOrder.indexOf(id);
+    binSel = new Set(binOrder.slice(Math.min(a, b), Math.max(a, b) + 1));
+  } else { binSel = new Set([id]); binLast = id; showSource(id); }
+  renderBinBar();
+}
+function binToJoin() {
+  const ids = binOrder.filter((id) => binSel.has(id) && (media[id] || {}).kind === 'video');
+  if (!ids.length) { status('영상 파일을 고른 뒤 담아 주세요.', true); return; }
+  setDock('join'); fillJoinBin(); jAdd(ids, null); jSay(`보관함에서 ${ids.length}개를 담았어요.`);
+}
+$('binAll').onclick = () => { binSel = new Set(binOrder); renderBinBar(); };
+$('binNone').onclick = () => { binSel = new Set(); renderBinBar(); };
+$('binToJoin').onclick = binToJoin;
+$('mediaList').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); binSel = new Set(binOrder); renderBinBar(); }
+  else if (e.key === 'Escape') { binSel = new Set(); renderBinBar(); }
+});
 function renderBin() {
-  const list = Object.values(media).filter((m) => !m.lib && !m.hidden && !m.shared).sort((a, b) => a.name.localeCompare(b.name));
+  const list = Object.values(media).filter((m) => !m.lib && !m.hidden && !m.shared).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  binOrder = list.map((m) => m.id); binSel = new Set([...binSel].filter((id) => media[id]));
   $('mediaList').innerHTML = list.length ? '' : '<p class="muted">아직 비어 있어요.</p>';
   for (const m of list) {
     const [ic, bg] = icon(m);
@@ -743,12 +822,16 @@ function renderBin() {
     el.innerHTML = `<span class="thumb" style="background-color:${bg}">${ic}</span><span class="nm"></span>`;
     if (m.kind === 'video') { const th = thumbsFor(m.id); if (th && th.frames[0]) setBinThumb(m.id, th.frames[0].cv); }
     el.querySelector('.nm').innerHTML = `${escapeHtml(m.name)}<small>${fmt(m.duration)} · ${m.kind === 'video' ? (m.has_audio ? '영상+소리' : '영상') : m.recorded ? '녹음' : '소리'}</small>`;
-    el.ondragstart = (e) => { e.dataTransfer.setData('text/x-media', m.id); e.dataTransfer.effectAllowed = 'copy'; dragMedia = m.id; };
+    el.ondragstart = (e) => {
+      e.dataTransfer.setData('text/x-media', m.id); e.dataTransfer.effectAllowed = 'copy'; dragMedia = m.id;
+      if (binSel.has(m.id) && binSel.size > 1) e.dataTransfer.setData('text/x-media-multi', JSON.stringify(binOrder.filter((id) => binSel.has(id))));
+    };
     el.ondragend = () => { dragMedia = null; ghost = null; };
-    el.onclick = () => showSource(m.id);
+    el.onclick = (e) => binClick(e, m.id);
     el.ondblclick = () => { setMonTab(false); placeAtPlayhead(m.id); };
     $('mediaList').appendChild(el);
   }
+  renderBinBar();
   try { refreshVoiceOpts(); refreshVoicePage(); } catch {}   // 읽기·더빙의 샘플 목소리 목록도 새 파일에 맞춰요
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -3662,10 +3745,23 @@ async function openJoin() {
     $('jEngine').innerHTML = s.rife ? 'AI 모핑 엔진: RIFE 사용 가능' : `AI 모핑 엔진: ffmpeg 보간으로 대신 동작 중. 더 자연스럽게 하려면 터미널에서 <code>${escapeHtml(s.setup_morph)}</code> 를 한 번 실행하세요.`;
   } catch {}
 }
+const natCmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+const jChecked = new Set();
 function fillJoinBin() {
-  const vids = Object.values(media).filter((m) => m.kind === 'video').sort((a, b) => a.name.localeCompare(b.name));
-  $('jBin').innerHTML = vids.length ? vids.map((m) => `<option value="${m.id}">${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('') : '<option value="">보관함에 영상이 없어요</option>';
+  const by = $('jSort').value;
+  const vids = Object.values(media).filter((m) => m.kind === 'video' && !m.lib && !m.hidden)
+    .sort(by === 'added' ? (a, b) => (a.added || 0) - (b.added || 0) || natCmp(a.name, b.name) : (a, b) => natCmp(a.name, b.name));
+  for (const id of [...jChecked]) if (!media[id]) jChecked.delete(id);
+  $('jBinList').innerHTML = vids.length ? vids.map((m) => `<label><input type="checkbox" data-jb="${m.id}" ${jChecked.has(m.id) ? 'checked' : ''}> <span class="t" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name)}</span> <small class="muted">${fmt(m.duration)}</small></label>`).join('') : '<p class="muted">보관함에 영상이 없어요.</p>';
+  $('jBinAdd').textContent = jChecked.size ? `선택한 ${jChecked.size}개 담기` : '선택한 영상 담기';
 }
+$('jBinList').addEventListener('change', (e) => {
+  const c = e.target.closest('input[data-jb]'); if (!c) return;
+  c.checked ? jChecked.add(c.dataset.jb) : jChecked.delete(c.dataset.jb); fillJoinBin();
+});
+$('jAll').onclick = () => { document.querySelectorAll('#jBinList input[data-jb]').forEach((c) => jChecked.add(c.dataset.jb)); fillJoinBin(); };
+$('jNone').onclick = () => { jChecked.clear(); fillJoinBin(); };
+$('jSort').onchange = fillJoinBin;
 function jReset() { J.plan = null; J.seams = []; $('jSeamSec').hidden = true; $('jVid').hidden = true; $('jVid').removeAttribute('src'); jSay(''); }
 function jAdd(mids, fromClips) {
   for (const id of mids) if (media[id]) J.items.push({ media: id, src_in: null, src_out: null });
@@ -3680,7 +3776,7 @@ function renderJoin() {
     const trim = pc ? `<div class="jtrim">시작 <input type="number" step="0.05" min="0" data-jt="in" data-i="${i}" value="${pc.src_in.toFixed(2)}">초 · 끝 <input type="number" step="0.05" min="0.3" data-jt="out" data-i="${i}" value="${pc.src_out.toFixed(2)}">초
       ${it.src_in !== null || it.src_out !== null ? `<button data-ja="auto" data-i="${i}" title="자동으로 되돌리기">자동</button>` : ''}</div>
       ${[...pc.reasons_in.map((r) => '앞: ' + r), ...pc.reasons_out.map((r) => '뒤: ' + r)].length ? `<span class="jwhy" style="margin-left:26px">✂ ${[...pc.reasons_in.map((r) => '앞 ' + r), ...pc.reasons_out.map((r) => '뒤 ' + r)].map(escapeHtml).join(' · ')} 정리</span>` : ''}` : '';
-    return `<div class="jit"><span class="n">${i + 1}</span><span class="t">${escapeHtml(m.name)}<small>${fmt(m.duration)}${pc && pc.gain !== 1 ? ` · 소리 ×${pc.gain.toFixed(2)}` : ''}</small></span>
+    return `<div class="jit" draggable="true" data-i="${i}"><span class="n">${i + 1}</span><span class="t">${escapeHtml(m.name)}<small>${fmt(m.duration)}${pc && pc.gain !== 1 ? ` · 소리 ×${pc.gain.toFixed(2)}` : ''}</small></span>
       <button data-ja="up" data-i="${i}" ${i ? '' : 'disabled'} title="위로">↑</button><button data-ja="dn" data-i="${i}" ${i < J.items.length - 1 ? '' : 'disabled'} title="아래로">↓</button><button data-ja="rm" data-i="${i}" title="빼기">✕</button></div>${trim}`;
   }).join('');
   const seams = $('jSeams');
@@ -3711,9 +3807,81 @@ async function jRunPlan() {
 }
 $('jPlan').onclick = () => { if (!J.items.length) return jSay('먼저 영상을 담아 주세요.', true); jGuard(jRunPlan); };
 function jReplanSoon() { jGuard(async () => { await jRunPlan(); }); }
-$('jBinAdd').onclick = () => { const v = $('jBin').value; if (v) jAdd([v], null); };
-$('jUp').onclick = () => { const f = document.createElement('input'); f.type = 'file'; f.multiple = true; f.accept = 'video/*';
-  f.onchange = () => jGuard(async () => { const ms = await uploadFiles([...f.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))); fillJoinBin(); jAdd(ms.filter((m) => m.kind === 'video').map((m) => m.id), null); jSay(''); }); f.click(); };
+$('jBinAdd').onclick = () => {
+  const ids = [...document.querySelectorAll('#jBinList input[data-jb]')].map((c) => c.dataset.jb).filter((id) => jChecked.has(id));
+  if (!ids.length) return jSay('위 목록에서 담을 영상을 먼저 체크하세요.', true);
+  jChecked.clear(); jAdd(ids, null); fillJoinBin(); jSay(`${ids.length}개를 담았어요.`);
+};
+// 파일·폴더 → 올려서 담기 (이름 숫자 순서대로)
+const isVideoFile = (f) => /^video\//.test(f.type) || /\.(mp4|mov|m4v|mkv|webm|avi)$/i.test(f.name);
+async function jAddFiles(files) {
+  const vids = files.filter(isVideoFile).sort((a, b) => natCmp(a.name, b.name));
+  if (!vids.length) return jSay('영상 파일이 없어요.', true);
+  await jGuard(async () => { const ms = await uploadFiles(vids); fillJoinBin(); jAdd(ms.filter((m) => m.kind === 'video').map((m) => m.id), null); jSay(`${vids.length}개 중 ${ms.length}개를 올려서 담았어요.`); });
+}
+function pickFiles(dir) {
+  const f = document.createElement('input'); f.type = 'file'; f.multiple = true; f.accept = dir ? '' : 'video/*';
+  if (dir) f.webkitdirectory = true;
+  f.onchange = () => jAddFiles([...f.files]); f.click();
+}
+$('jUp').onclick = () => pickFiles(false);
+$('jDir').onclick = () => pickFiles(true);
+async function entryFiles(entry) {   // 끌어 놓은 폴더 안의 파일을 전부 (하위 폴더 포함)
+  if (entry.isFile) return [await new Promise((res, rej) => entry.file(res, rej))];
+  const out = [], rd = entry.createReader();
+  for (;;) {
+    const batch = await new Promise((res, rej) => rd.readEntries(res, rej)); if (!batch.length) break;
+    for (const e of batch) out.push(...(await entryFiles(e)));
+  }
+  return out;
+}
+async function droppedFiles(dt) {
+  const items = [...(dt.items || [])].map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  if (items.length && items.every(Boolean)) { const out = []; for (const e of items) out.push(...(await entryFiles(e))); return out; }
+  return [...dt.files];
+}
+const sec1 = $('jSec1');
+sec1.addEventListener('dragover', (e) => {
+  const t = [...(e.dataTransfer.types || [])];
+  if (t.includes('text/x-jit')) return;
+  if (t.includes('Files') || t.includes('text/x-media') || t.includes('text/x-media-multi')) { e.preventDefault(); sec1.classList.add('over'); }
+});
+sec1.addEventListener('dragleave', (e) => { if (!sec1.contains(e.relatedTarget)) sec1.classList.remove('over'); });
+sec1.addEventListener('drop', async (e) => {
+  sec1.classList.remove('over');
+  const t = [...(e.dataTransfer.types || [])];
+  if (t.includes('text/x-jit')) return;
+  e.preventDefault(); if (J.busy) return;
+  const multi = e.dataTransfer.getData('text/x-media-multi'), one = e.dataTransfer.getData('text/x-media');
+  if (multi || one) {
+    let ids = multi ? JSON.parse(multi) : [one]; ids = ids.filter((id) => (media[id] || {}).kind === 'video');
+    if (!ids.length) return jSay('영상 파일만 담을 수 있어요.', true);
+    dragMedia = null; jAdd(ids, null); jSay(`${ids.length}개를 담았어요.`); return;
+  }
+  jAddFiles(await droppedFiles(e.dataTransfer));
+});
+// 담은 목록 정렬
+const jReorder = (cmp) => { const had = !!J.plan; J.items.sort(cmp); J.seams = []; J.plan = null; renderJoin(); if (had && J.items.length) { $('jSeamSec').hidden = true; jReplanSoon(); } else jReset(); };
+$('jSortName').onclick = () => jReorder((a, b) => natCmp((media[a.media] || {}).name || '', (media[b.media] || {}).name || ''));
+$('jSortAdded').onclick = () => jReorder((a, b) => ((media[a.media] || {}).added || 0) - ((media[b.media] || {}).added || 0));
+$('jRev').onclick = () => { J.items.reverse(); jReorder(() => 0); };
+$('jClear').onclick = () => { J.items = []; J.fromClips = null; jReset(); renderJoin(); };
+// 담은 목록에서 끌어 순서 바꾸기
+let jDragI = null;
+$('jList').addEventListener('dragstart', (e) => { const r = e.target.closest('.jit'); if (!r || J.busy) return e.preventDefault(); jDragI = +r.dataset.i; e.dataTransfer.setData('text/x-jit', String(jDragI)); e.dataTransfer.effectAllowed = 'move'; r.classList.add('dragging'); });
+$('jList').addEventListener('dragend', () => { jDragI = null; document.querySelectorAll('#jList .jit').forEach((r) => r.classList.remove('dragging', 'dropbefore')); });
+$('jList').addEventListener('dragover', (e) => {
+  if (jDragI === null) return; e.preventDefault();
+  const r = e.target.closest('.jit'); document.querySelectorAll('#jList .jit').forEach((x) => x.classList.toggle('dropbefore', x === r));
+});
+$('jList').addEventListener('drop', (e) => {
+  if (jDragI === null) return; e.preventDefault(); e.stopPropagation();
+  const r = e.target.closest('.jit'); let to = r ? +r.dataset.i : J.items.length;
+  const from = jDragI; jDragI = null;
+  if (to === from || to === from + 1) return renderJoin();
+  const [it] = J.items.splice(from, 1); if (to > from) to--; J.items.splice(to, 0, it);
+  jReorder(() => 0);
+});
 $('jTl').onclick = () => {
   const s = clipById(sel.clip), tr0 = (s && trackOf(s)) || project.tracks.find((t) => t.kind === 'video');
   const cl = project.clips.filter((c) => trackOf(c) === tr0 && tr0.kind === 'video' && c.layout !== 'pip' && (media[c.media] || {}).kind === 'video').sort((a, b) => a.start - b.start);

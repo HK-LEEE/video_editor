@@ -20,6 +20,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -123,6 +124,10 @@ class Workspace:
                     m = json.loads(p.read_text())
                 except (OSError, ValueError):
                     continue
+                try:
+                    m.setdefault("added", p.stat().st_mtime)   # '추가순' 정렬용 (옛 파일은 만든 시각으로)
+                except OSError:
+                    pass
                 out[m["id"]] = m
         return list(out.values())
 
@@ -180,7 +185,7 @@ def add_media(ws: Workspace, src: Path, name: str, recorded: bool = False, share
         (mdir / file).unlink(missing_ok=True)
         raise HTTPException(400, "영상이나 소리를 읽을 수 없는 파일입니다.")
     meta = {"id": mid, "name": name, "file": file, "recorded": recorded,
-            "kind": "video" if info["has_video"] else "audio", **info}
+            "kind": "video" if info["has_video"] else "audio", "added": time.time(), **info}
     (mdir / f"{mid}.json").write_text(json.dumps(meta, ensure_ascii=False))
     return meta
 
