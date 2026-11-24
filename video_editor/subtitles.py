@@ -50,6 +50,12 @@ class SubtitleStyle(BaseModel):
     max_width: float = Field(0.9, ge=0.2, le=1.0)   # 한 줄 최대 폭 (화면 폭 비율)
     karaoke: bool = False                           # 말하는 낱말마다 색이 바뀌는 쇼츠식 자막 (낱말 시각이 있는 자막만)
     hl_color: str = "#ffd400"                       # 말하고 있는(이미 말한) 낱말의 색
+    italic: bool = False
+    shadow: float = Field(0.0, ge=0.0, le=0.5)      # 그림자 거리 = 글자 크기의 비율 (0이면 없음)
+    spacing: float = Field(0.0, ge=0.0, le=0.5)     # 글자 사이 간격 = 글자 크기의 비율
+    upper: bool = False                             # 영문을 모두 대문자로
+    box_pad: float = Field(0.25, ge=0.0, le=1.0)    # 배경 상자의 안쪽 여백 = 글자 크기의 비율
+    glow: float = Field(0.0, ge=0.0, le=1.0)        # 외곽선 색으로 번지는 빛 (네온)
 
 
 def _color(v: str, default: str) -> str:
@@ -108,13 +114,13 @@ def karaoke_words(c: Cue, lang: str = "") -> list[CueWord] | None:
     return sorted(c.words, key=lambda w: w.s)
 
 
-def karaoke_text(c: Cue, words: list[CueWord], cjk: bool) -> str:
+def karaoke_text(c: Cue, words: list[CueWord], cjk: bool, upper: bool = False) -> str:
     """ASS의 \\k 태그: 낱말 앞에서 색이 바뀝니다. 낱말 사이 쉼도 앞 낱말 시간에 넣어 흐름이 끊기지 않게 합니다."""
     cs = lambda sec: max(0, int(round(sec * 100)))
     out = [f"{{\\k{cs(words[0].s)}}}"] if words[0].s > 0.01 else []
     for i, w in enumerate(words):
         nxt = words[i + 1].s if i + 1 < len(words) else max(w.e, w.s + 0.05)
-        out.append(f"{{\\k{cs(max(nxt - w.s, 0.01))}}}{_ass_text(w.w)}" + ("" if cjk or i + 1 == len(words) else " "))
+        out.append(f"{{\\k{cs(max(nxt - w.s, 0.01))}}}{_ass_text(w.w.upper() if upper else w.w)}" + ("" if cjk or i + 1 == len(words) else " "))
     return "".join(out)
 
 
@@ -124,7 +130,10 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
     px = max(8.0, style.size * height)              # 미리보기(CSS)의 글자 크기와 같은 기준
     size = round(px * ASS_SIZE_FACTOR)
     outline = round(style.outline * px, 1)
-    box_pad = round(px * 0.25, 1)
+    box_pad = round(px * style.box_pad, 1)
+    shadow = round(style.shadow * px, 1)
+    spacing = round(style.spacing * px, 1)
+    italic = -1 if style.italic else 0
     margin_h = round((1 - style.max_width) / 2 * width)
     bold = -1 if style.bold else 0
     font = style.font.replace(",", " ") or "sans-serif"
@@ -134,9 +143,9 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
     fmt = ("Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,"
            "StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding")
 
-    def row(name, primary, outl, back, border, ol, secondary="&H000000FF"):
-        return (f"Style: {name},{font},{size},{primary},{secondary},{outl},{back},{bold},0,0,0,100,100,0,0,"
-                f"{border},{ol},0,5,{margin_h},{margin_h},0,1")
+    def row(name, primary, outl, back, border, ol, secondary="&H000000FF", sh=0.0):
+        return (f"Style: {name},{font},{size},{primary},{secondary},{outl},{back},{bold},{italic},0,0,100,100,{spacing},0,"
+                f"{border},{ol},{sh},5,{margin_h},{margin_h},0,1")
 
     kara = style.karaoke
     hl = _color(style.hl_color, "#ffd400")
@@ -144,19 +153,22 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
              "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
              "[V4+ Styles]", f"Format: {fmt}",
              # 카라오케: SecondaryColour = 아직 안 말한 낱말, PrimaryColour = 말한 낱말
-             row("Text", _ass_rgb(hl if kara else color), _ass_rgb(oc), "&H00000000", 1, outline,
-                 _ass_rgb(color) if kara else "&H000000FF")]
+             row("Text", _ass_rgb(hl if kara else color), _ass_rgb(oc), "&H80000000" if shadow else "&H00000000", 1, outline,
+                 _ass_rgb(color) if kara else "&H000000FF", shadow)]
     if style.bg_opacity > 0:
         # BorderStyle 3: 글자 뒤에 OutlineColour 색 상자. 글자 자체는 투명하게 해서 상자만 보이게 합니다.
         lines.append(row("Box", "&HFF000000", _ass_rgb(bg, style.bg_opacity), "&H00000000", 3, box_pad))
     lines += ["", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"]
-    pos = f"{{\\an5\\pos({round(style.x * width)},{round(style.y * height)})}}"
+    glow = f"\\blur{round(style.glow * px * 0.2, 1)}" if style.glow > 0 else ""
+    base = f"\\an5\\pos({round(style.x * width)},{round(style.y * height)})"
+    pos, box_pos = f"{{{base}{glow}}}", f"{{{base}}}"
     for c in active_cues(cues, lang, length):
         end = c.end if length is None else min(c.end, length)
-        text = pos + _ass_text(c.text)
+        shown = c.text.upper() if style.upper else c.text
+        text = pos + _ass_text(shown)
         words = karaoke_words(c) if kara else None
-        top = pos + karaoke_text(c, words, c.lang in ("ja", "zh")) if words else text
+        top = pos + karaoke_text(c, words, c.lang in ("ja", "zh"), style.upper) if words else text
         if style.bg_opacity > 0:
-            lines.append(f"Dialogue: 0,{ass_time(c.start)},{ass_time(end)},Box,,0,0,0,,{text}")
+            lines.append(f"Dialogue: 0,{ass_time(c.start)},{ass_time(end)},Box,,0,0,0,,{box_pos}{_ass_text(shown)}")
         lines.append(f"Dialogue: 1,{ass_time(c.start)},{ass_time(end)},Text,,0,0,0,,{top}")
     return "\n".join(lines) + "\n"

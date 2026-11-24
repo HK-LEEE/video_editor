@@ -93,6 +93,18 @@
   #monitor .ph .meta { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); font-variant-numeric: tabular-nums; }
   #monBody { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px; gap: 8px; }
   #stage { position: relative; flex: 1; min-height: 0; background: #050506; border-radius: 6px; overflow: hidden; display: grid; place-items: center; box-shadow: inset 0 0 0 1px #ffffff10; }
+  .voicebox { margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #181a21; }
+  .voicebox select { flex: 1; min-width: 0; }
+  .wsnote { display: flex; align-items: baseline; gap: 8px; margin: -2px 0 10px; padding: 6px 9px; border-radius: 7px; background: #20242e; border-left: 3px solid #6aa9ff; font-size: 11px; color: var(--muted, #9aa); }
+  .wsnote b { color: var(--text, #eee); font-size: 12px; }
+  .wsnote.ws-audio { border-color: #4cd1a0; } .wsnote.ws-color { border-color: #ffb454; } .wsnote.ws-shorts { border-color: #ff6f91; }
+  .mixrow { display: flex; gap: 8px; align-items: center; padding: 7px 8px; margin-bottom: 4px; border-radius: 6px; background: #1b1d25; cursor: pointer; }
+  .mixrow:hover { background: #242833; } .mixrow span { flex: 1; } .mixrow i { color: var(--rec, #f55); font-style: normal; font-size: 11px; }
+  .spgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; margin: 4px 0 12px; max-height: 250px; overflow-y: auto; padding-right: 2px; }
+  .spc { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 4px; text-align: center; background: var(--panel2, #1b1d25); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  .spc:hover { border-color: var(--accent, #6aa9ff); }
+  .spc .spv { display: flex; align-items: center; justify-content: center; height: 42px; border-radius: 5px; overflow: hidden; background: linear-gradient(135deg, #4a5a70, #2a2f3a 60%, #5b4a60); }
+  .spc small { font-size: 10px; color: var(--muted, #9aa); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #frame { position: relative; background: #000; overflow: hidden; width: 100%; aspect-ratio: 16 / 9; }
   #frame video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; }
   #frame video.show { visibility: visible; }
@@ -209,6 +221,10 @@
   #shortSubs, #ovl { display: none; }
   body.short #vp { display: block; position: relative; overflow: hidden; background: #000; border-radius: 22px; box-shadow: 0 0 0 6px #1c1c20, 0 8px 30px #000c; flex: none; touch-action: none; cursor: grab; }
   body.short #vp.drag { cursor: grabbing; }
+  #fitBg { display: none; }
+  body.short #fitBg { position: absolute; inset: -6%; width: 112%; height: 112%; filter: blur(10px) brightness(.8); pointer-events: none; }
+  body.short #vp:not(.fit) #fitBg { display: none; }
+  body.short #vp.fit #fitBg { display: block; }
   body.short #frame { position: absolute; aspect-ratio: auto; }
   body.short #shortSubs { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
   body.short #shortSubs .cue { position: absolute; transform: translate(-50%, -50%); width: max-content; text-align: center; white-space: pre-wrap; line-height: 1.25; paint-order: stroke fill; }
@@ -330,7 +346,7 @@
     <div class="ph"><div class="tabs2"><button id="monTabP" class="lit">프로그램</button><button id="monTabS">소스</button></div><span class="meta" id="monMeta"></span><span style="flex:1"></span>
       <button id="binShow" title="보관함 보이기" hidden><svg class="ic"><use href="#i-panel-l"/></svg></button><button id="dockShow" title="속성 패널 보이기" hidden><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
     <div id="monBody">
-      <div id="stage"><div id="vp"><div id="frame"><div id="dip"></div><div id="subs"></div></div><div id="shortSubs"></div><div id="ovl"></div></div></div>
+      <div id="stage"><div id="vp"><canvas id="fitBg" width="54" height="96"></canvas><div id="frame"><div id="dip"></div><div id="subs"></div></div><div id="shortSubs"></div><div id="ovl"></div></div></div>
       <div id="transport">
         <button id="homeBtn" title="Home"><svg class="ic"><use href="#i-home"/></svg></button>
         <button id="prevBtn" title="이전 경계 ["><svg class="ic"><use href="#i-prev"/></svg></button>
@@ -383,7 +399,10 @@
     <h3>5. 대본 읽기 (TTS) · 감정</h3><p class="muted">글을 음성으로 읽어 재생 위치에 넣어요. 문장마다 감정을 알아채 억양·속도·세기를 바꿔 읽고, 문장 앞에 <code>[화남]</code> <code>[슬픔]</code> 처럼 적으면 그 문장만 직접 정해요. <span id="aiTtsNote"></span></p>
     <textarea id="aiTtsText" rows="3" placeholder="읽을 글 (예: [기쁨] 드디어 왔어요! 그런데... [슬픔] 아무도 없네요.)"></textarea>
     <div class="row" style="margin-top:6px"><span class="muted">감정</span><select id="aiTtsEmo"></select><span class="muted">세기 <b id="aiTtsEmoV">×1.0</b></span><input type="range" id="aiTtsEmoLv" min="0" max="2" step="0.1" value="1"></div>
-    <div class="row" style="margin-top:6px"><span class="muted">목소리</span><select id="aiTtsChar"></select><button id="aiS5b" title="문장마다 어떤 감정으로 읽을지 미리 봐요">감정 미리보기</button></div>
+    <div class="voicebox"><div class="row"><span class="muted">읽을 목소리</span><select id="aiTtsChar"></select></div>
+      <div class="row" style="margin-top:6px"><button id="aiSampleUp" title="10~30초 정도, 배경 소리 없이 한 사람만 말하는 파일이 좋아요">📁 샘플 목소리 올리기</button><button id="aiTtsPrev" title="글의 앞부분만 이 목소리로 읽어서 들어 봐요 (타임라인에는 넣지 않아요)">▶ 미리듣기</button><button id="aiS5b" title="문장마다 어떤 감정으로 읽을지 미리 봐요">감정 미리보기</button></div>
+      <input type="file" id="aiSampleIn" accept="audio/*,video/*" hidden>
+      <p class="muted" id="aiVoiceNote"></p></div>
     <div class="row" style="margin-top:6px"><select id="aiTtsLang"></select><span class="muted">속도 <b id="aiTtsRateV">×1.0</b></span><input type="range" id="aiTtsRate" min="0.6" max="1.6" step="0.1" value="1"><button id="aiS5" class="primary">읽어서 넣기</button></div>
     <p class="aimsg"></p>
   </section>
@@ -489,7 +508,8 @@ const AI_LANGS = { ko: '한국어', en: 'English', ja: '日本語', zh: '中文'
 const newTrack = (kind, o = {}) => ({ id: uid(), kind, name: '', mute: false, solo: false, volume: 1, voice: false,
   room: 0, level: false, gate: false, tone: false, duck: 0, vol_keys: [], ...o });
 const SUB_DEFAULTS = { font: 'Apple SD Gothic Neo', size: 0.06, bold: true, color: '#ffffff', outline_color: '#000000', outline: 0.1,
-  bg_color: '#000000', bg_opacity: 0, x: 0.5, y: 0.85, max_width: 0.9, karaoke: false, hl_color: '#ffd400' };
+  bg_color: '#000000', bg_opacity: 0, x: 0.5, y: 0.85, max_width: 0.9, karaoke: false, hl_color: '#ffd400',
+  italic: false, shadow: 0, spacing: 0, upper: false, box_pad: 0.25, glow: 0 };
 const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true, speed: 1 };
 const COLOR_DEFAULT = { brightness: 0, contrast: 1, saturation: 1, temperature: 0 };
 // 소리 믹스에 영향이 없는 클립 항목 (바꿔도 미리듣기를 다시 만들지 않음). 속도·볼륨 키프레임은 소리에 영향이 있으니 들어 있지 않습니다.
@@ -587,6 +607,7 @@ function renderBin() {
     el.ondblclick = () => { setMonTab(false); placeAtPlayhead(m.id); };
     $('mediaList').appendChild(el);
   }
+  try { refreshVoiceOpts(); } catch {}   // 읽기·더빙의 샘플 목소리 목록도 새 파일에 맞춰요
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 async function uploadFiles(files, opts = {}) {
@@ -910,16 +931,13 @@ function updateSubs(t, fh) {
   subsKey = key; target.innerHTML = '';
   const px = st.size * fh;
   for (const c of cues) {
-    const d = document.createElement('div'); d.className = 'cue'; d.textContent = c.text.trim();
+    const d = document.createElement('div'); d.className = 'cue'; d.textContent = c.text.trim();   // 대문자 변환은 CSS(textTransform)가 합니다
     const kw = kwords(c);
     if (kw) {   // 낱말 강조: 말한 낱말은 강조 색
       const a = kact(c, kw), cjk = c.lang === 'ja' || c.lang === 'zh';
       d.innerHTML = kw.map((w, i) => `<span style="color:${i <= a ? st.hl_color : st.color}">${escapeHtml(w.w)}</span>`).join(cjk ? '' : ' ');
     }
-    const bg = st.bg_opacity > 0 ? hexAlpha(st.bg_color, st.bg_opacity) : 'transparent';
-    Object.assign(d.style, { left: st.x * 100 + '%', top: st.y * 100 + '%', maxWidth: st.max_width * 100 + '%', fontFamily: `"${st.font}", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`,
-      fontSize: px + 'px', fontWeight: st.bold ? '700' : '400', color: st.color, background: bg, padding: st.bg_opacity > 0 ? `${px * 0.25}px` : '0',
-      webkitTextStroke: st.outline > 0 ? `${2 * st.outline * px}px ${st.outline_color}` : '0' });
+    Object.assign(d.style, cueLook(st, px), { left: st.x * 100 + '%', top: st.y * 100 + '%', maxWidth: st.max_width * 100 + '%' });
     target.appendChild(d);
   }
 }
@@ -1292,27 +1310,70 @@ function bindColor(c) {
 }
 
 // ---- 자막 속성
-const FONTS = ['Apple SD Gothic Neo', 'AppleMyungjo', 'Noto Sans KR', 'Nanum Gothic', 'Arial', 'Helvetica Neue', 'Arial Black', 'Impact'];
+const FONTS = ['Apple SD Gothic Neo', 'AppleMyungjo', 'Noto Sans KR', 'Nanum Gothic', 'Arial', 'Helvetica Neue', 'Arial Black', 'Impact', 'Marker Felt', 'Courier New', 'Georgia'];
+const SUB_RESET = { font: 'Apple SD Gothic Neo', karaoke: false, bold: true, italic: false, shadow: 0, spacing: 0, upper: false, box_pad: 0.25, glow: 0,
+  bg_opacity: 0, bg_color: '#000000', y: 0.85, outline: 0.1, outline_color: '#000000', color: '#ffffff', size: 0.06, hl_color: '#ffd400' };
+// 이름 → 바뀌는 항목. 미리보기와 내보내기(ASS)가 같은 값을 쓰므로 화면 그대로 영상에 입혀져요.
 const SUB_PRESETS = {
-  '기본': { color: '#ffffff', outline_color: '#000000', outline: 0.1, bg_opacity: 0, bold: true, size: 0.06 },
-  '예능': { color: '#ffe14d', outline_color: '#000000', outline: 0.16, bg_opacity: 0, bold: true, size: 0.09 },
-  '박스': { color: '#ffffff', outline_color: '#000000', outline: 0, bg_color: '#000000', bg_opacity: 0.6, bold: true, size: 0.055 },
-  '쇼츠 낱말': { karaoke: true, hl_color: '#ffe14d', color: '#ffffff', outline_color: '#000000', outline: 0.16, bg_opacity: 0, bold: true, size: 0.075, y: 0.62 },
+  '기본': {},
+  '예능 노랑': { color: '#ffe14d', outline: 0.16, size: 0.09 },
+  '예능 분홍': { color: '#ff5fa8', outline_color: '#ffffff', outline: 0.14, size: 0.085, shadow: 0.06 },
+  '예능 하늘': { color: '#6fd3ff', outline_color: '#0b2a6b', outline: 0.18, size: 0.085 },
+  '굵은 외곽선': { color: '#ffffff', outline_color: '#000000', outline: 0.28, size: 0.08 },
+  '박스': { outline: 0, bg_opacity: 0.6, size: 0.055 },
+  '흰 박스': { color: '#111111', outline: 0, bg_color: '#ffffff', bg_opacity: 0.92, size: 0.055, box_pad: 0.3 },
+  '노랑 박스': { color: '#111111', outline: 0, bg_color: '#ffe14d', bg_opacity: 1, size: 0.055, box_pad: 0.3 },
+  '뉴스 하단': { color: '#ffffff', outline: 0, bg_color: '#0b2a6b', bg_opacity: 0.92, size: 0.05, y: 0.88, box_pad: 0.35 },
+  '뉴스 속보': { color: '#ffffff', outline: 0, bg_color: '#c4161c', bg_opacity: 0.95, size: 0.05, y: 0.88, box_pad: 0.35, upper: true },
+  '쇼츠 낱말': { karaoke: true, hl_color: '#ffe14d', outline: 0.16, size: 0.075, y: 0.62 },
+  '쇼츠 초록': { karaoke: true, hl_color: '#39ff88', outline: 0.18, size: 0.08, y: 0.62, shadow: 0.05 },
+  '노래방': { karaoke: true, hl_color: '#00e5ff', color: '#ffffff', outline_color: '#1a3cff', outline: 0.2, size: 0.075, y: 0.8 },
+  '네온 핑크': { color: '#ffd6ef', outline_color: '#ff2fa3', outline: 0.1, glow: 0.9, size: 0.07, bold: false },
+  '네온 청록': { color: '#e0ffff', outline_color: '#00e5ff', outline: 0.1, glow: 0.9, size: 0.07, bold: false },
+  '미니멀': { bold: false, outline: 0, shadow: 0.05, size: 0.05, spacing: 0.03 },
+  '시네마': { font: 'AppleMyungjo', bold: false, italic: true, outline: 0, shadow: 0.06, size: 0.05, spacing: 0.06, y: 0.9, color: '#f5f0e0' },
+  '영화 노랑': { bold: false, color: '#ffe14d', outline: 0.08, size: 0.052, y: 0.9, shadow: 0.04 },
+  '손글씨': { font: 'Marker Felt', bold: false, color: '#fff6c8', outline_color: '#5a3a1a', outline: 0.14, size: 0.07, italic: true },
+  '레트로 게임': { font: 'Courier New', color: '#7cfc00', outline: 0.1, shadow: 0.08, size: 0.055, upper: true, spacing: 0.04 },
+  '공포': { font: 'Impact', bold: false, color: '#ff2a2a', outline_color: '#000000', outline: 0.12, glow: 0.6, size: 0.085, spacing: 0.03 },
+  '임팩트 대문자': { font: 'Impact', bold: false, upper: true, outline: 0.12, size: 0.09, spacing: 0.02, shadow: 0.05 },
+};
+// 글자 모양 (미리보기·카드 썸네일 공통). px는 글자 크기(px)
+function cueLook(st, px) {
+  const glowC = st.glow > 0 ? `, 0 0 ${px * st.glow * 0.35}px ${st.outline_color}, 0 0 ${px * st.glow * 0.7}px ${st.outline_color}` : '';
+  const sh = st.shadow > 0 ? `${px * st.shadow}px ${px * st.shadow}px ${px * st.shadow * 0.6}px rgba(0,0,0,.65)` : '';
+  const ts = [sh, glowC.slice(2)].filter(Boolean).join(', ');
+  return { fontFamily: `"${st.font}", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`, fontSize: px + 'px', fontWeight: st.bold ? '700' : '400',
+    fontStyle: st.italic ? 'italic' : 'normal', letterSpacing: px * (st.spacing || 0) + 'px', textTransform: st.upper ? 'uppercase' : 'none',
+    color: st.color, background: st.bg_opacity > 0 ? hexAlpha(st.bg_color, st.bg_opacity) : 'transparent',
+    padding: st.bg_opacity > 0 ? `${px * (st.box_pad ?? 0.25)}px` : '0',
+    webkitTextStroke: st.outline > 0 ? `${2 * st.outline * px}px ${st.outline_color}` : '0', textShadow: ts || 'none', paintOrder: 'stroke fill' };
+}
+const subPresetCard = (k) => {
+  const st = { ...SUB_DEFAULTS, ...SUB_RESET, ...SUB_PRESETS[k] }, look = cueLook(st, 15);
+  const css = escapeHtml(Object.entries(look).map(([a, v]) => `${a.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase()).replace(/^webkit/, '-webkit')}:${v}`).join(';'));
+  return `<button class="spc" data-preset="${k}" title="${k}"><span class="spv"><span style="${css};width:auto;max-width:96%;white-space:nowrap">${st.karaoke ? `<span style="color:${st.hl_color}">자막</span> Abc` : '자막 Abc'}</span></span><small>${k}</small></button>`;
 };
 function subStyleHtml() {
   const s = project.subtitle_style;
   const fonts = FONTS.includes(s.font) ? FONTS : [s.font, ...FONTS];
   const col = (id, v) => `<input type="color" id="${id}" value="${v}">`;
   return `<h2 class="sub">자막 스타일 <span class="muted" style="text-transform:none">(모든 자막)</span></h2>
-    <div class="row" style="margin-bottom:8px">${Object.keys(SUB_PRESETS).map((k) => `<button data-preset="${k}">${k}</button>`).join('')}</div>
+    <div class="spgrid">${Object.keys(SUB_PRESETS).map(subPresetCard).join('')}</div>
     ${field('글꼴', `<select id="sFont">${fonts.map((f) => `<option ${f === s.font ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('')}</select>`)}
     ${field(`크기 <b id="sSizeV">${(s.size * 100).toFixed(1)}%</b>`, `<input type="range" id="sSize" min="0.02" max="0.2" step="0.005" value="${s.size}">`)}
-    <label class="check"><input type="checkbox" id="sBold" ${s.bold ? 'checked' : ''}> 굵게</label>
+    <div class="row" style="margin-bottom:4px"><label class="check"><input type="checkbox" id="sBold" ${s.bold ? 'checked' : ''}> 굵게</label>
+      <label class="check"><input type="checkbox" id="sItal" ${s.italic ? 'checked' : ''}> 기울임</label>
+      <label class="check"><input type="checkbox" id="sUp" ${s.upper ? 'checked' : ''}> 영문 대문자</label></div>
     <label class="check" title="AI 받아쓰기로 만든 자막처럼 낱말 시각이 있는 자막에서, 말하는 낱말마다 색이 바뀌어요"><input type="checkbox" id="sKara" ${s.karaoke ? 'checked' : ''}> 낱말 강조 (말하는 낱말마다 색이 바뀜)</label>
     ${s.karaoke ? `<div class="row" style="margin:2px 0 8px"><span class="muted">강조 색</span><input type="color" id="sHl" value="${s.hl_color}"></div>` : ''}
     <div class="row" style="margin:6px 0 10px"><span class="muted">글자</span>${col('sColor', s.color)}<span class="muted">외곽선</span>${col('sOutC', s.outline_color)}<span class="muted">배경</span>${col('sBgC', s.bg_color)}</div>
     ${field(`외곽선 굵기 <b id="sOutV">${pct(s.outline)}</b>`, `<input type="range" id="sOut" min="0" max="0.3" step="0.01" value="${s.outline}">`)}
     ${field(`배경 불투명도 <b id="sBgV">${s.bg_opacity ? pct(s.bg_opacity) : '없음'}</b>`, `<input type="range" id="sBg" min="0" max="1" step="0.05" value="${s.bg_opacity}">`)}
+    ${field(`그림자 <b id="sShV">${s.shadow ? pct(s.shadow) : '없음'}</b>`, `<input type="range" id="sSh" min="0" max="0.2" step="0.01" value="${s.shadow}">`)}
+    ${field(`네온 빛 <b id="sGlV">${s.glow ? pct(s.glow) : '없음'}</b>`, `<input type="range" id="sGl" min="0" max="1" step="0.05" value="${s.glow}">`)}
+    ${field(`글자 간격 <b id="sSpV">${pct(s.spacing)}</b>`, `<input type="range" id="sSp" min="0" max="0.15" step="0.005" value="${s.spacing}">`)}
+    ${s.bg_opacity ? field(`상자 여백 <b id="sPadV">${pct(s.box_pad)}</b>`, `<input type="range" id="sPad" min="0" max="0.8" step="0.05" value="${s.box_pad}">`) : ''}
     <div class="field"><span>세로 위치</span><div class="row"><button data-y="0.12">위</button><button data-y="0.5">가운데</button><button data-y="0.85">아래</button></div></div>
     ${field('', `<input type="range" id="sY" min="0.05" max="0.95" step="0.005" value="${s.y}">`)}
     <p class="muted">글자 크기는 화면 높이 기준이라 세로 영상에도 같은 비율로 입혀져요. 쇼츠·릴스 안전 영역 안내는 나중에 추가해요.</p>`;
@@ -1326,17 +1387,19 @@ function bindSubStyle() {
     el.oninput = (e) => { begin(); s[key] = kind === 'color' ? e.target.value : +e.target.value; if (lbl) $(lbl[0]).textContent = lbl[1](s[key]); };
     el.onchange = () => commit();
   };
-  bind('sFont', 'font', 'select'); bind('sBold', 'bold', 'check'); bind('sKara', 'karaoke', 'check'); bind('sHl', 'hl_color', 'color');
+  bind('sFont', 'font', 'select'); bind('sBold', 'bold', 'check'); bind('sItal', 'italic', 'check'); bind('sUp', 'upper', 'check');
+  bind('sSh', 'shadow', 'range', ['sShV', (v) => (v ? pct(v) : '없음')]); bind('sGl', 'glow', 'range', ['sGlV', (v) => (v ? pct(v) : '없음')]);
+  bind('sSp', 'spacing', 'range', ['sSpV', pct]); bind('sPad', 'box_pad', 'range', ['sPadV', pct]); bind('sKara', 'karaoke', 'check'); bind('sHl', 'hl_color', 'color');
   bind('sSize', 'size', 'range', ['sSizeV', (v) => (v * 100).toFixed(1) + '%']);
   bind('sColor', 'color', 'color'); bind('sOutC', 'outline_color', 'color'); bind('sBgC', 'bg_color', 'color');
   bind('sOut', 'outline', 'range', ['sOutV', pct]); bind('sBg', 'bg_opacity', 'range', ['sBgV', (v) => (v ? pct(v) : '없음')]);
   bind('sY', 'y', 'range');
-  document.querySelectorAll('[data-preset]').forEach((b) => (b.onclick = () => edit(() => Object.assign(s, SUB_PRESETS[b.dataset.preset]))));
+  document.querySelectorAll('[data-preset]').forEach((b) => (b.onclick = () => edit(() => Object.assign(s, SUB_RESET, SUB_PRESETS[b.dataset.preset]))));
   document.querySelectorAll('[data-y]').forEach((b) => (b.onclick = () => edit(() => (s.y = +b.dataset.y))));
 }
-function renderSubInspector(box, cue, result) {
+function renderSubInspector(box, cue, result, note = '') {
   const cues = [...project.subtitles].sort((a, b) => a.start - b.start);
-  box.innerHTML = `<h2>자막</h2>
+  box.innerHTML = `${note}<h2>자막</h2>
     ${cue ? `${field('내용', `<textarea id="cText" rows="3" placeholder="자막 내용 (줄바꿈 가능)">${escapeHtml(cue.text)}</textarea>`)}
       <div class="row" style="margin-bottom:10px"><span class="muted">시작</span><input type="number" id="cStart" step="0.05" min="0" value="${cue.start.toFixed(2)}">
         <span class="muted">끝</span><input type="number" id="cEnd" step="0.05" min="0" value="${cue.end.toFixed(2)}"></div>
@@ -1370,42 +1433,70 @@ function renderSubInspector(box, cue, result) {
   $('cShowLang').onchange = (e) => edit(() => (project.subtitle_lang = e.target.value));
   bindSubStyle();
 }
+// 작업공간(편집/오디오/색 보정/쇼츠·릴스)에 따라 속성 패널에 그 작업에 필요한 항목만 보여줍니다
+const curWs = () => (SHORT.on ? 'shorts' : ui.ws === 'shorts' ? 'edit' : ui.ws || 'edit');
+const WS_NOTE = { edit: ['편집', '자르기·속도·전환·화면 배치·자막'], audio: ['오디오', '목소리·볼륨·소리 효과'], color: ['색 보정', '밝기·대비·채도·색온도'], shorts: ['쇼츠·릴스', '세로 화면 구도'] };
+function wsHint(msg, btns = '') { return `<p class="muted wsgo">${msg}</p>${btns ? `<div class="row" style="margin-bottom:10px">${btns}</div>` : ''}`; }
 function renderInspector() {
   if (SHORT.on) { renderShortPanel(); return; }
   const box = $('inspector'), c = clipById(sel.clip), t = !c && project.tracks.find((k) => k.id === sel.track);
   const result = $('result') ? $('result').outerHTML : '<div id="result"></div>';
-  if (!c && !t && (sel.cue || sel.subs)) { renderSubInspector(box, sel.cue && cueById(sel.cue), result); return; }
+  const W = curWs(), note = `<div class="wsnote ws-${W}"><b>${WS_NOTE[W][0]} 작업</b><span>${WS_NOTE[W][1]}</span></div>`;
+  const goBtn = (ws, label) => `<button data-gows="${ws}">${label}</button>`;
+  const bindGo = () => box.querySelectorAll('[data-gows]').forEach((b) => (b.onclick = () => applyWorkspace(b.dataset.gows)));
+  if (!c && !t && (sel.cue || sel.subs)) {
+    if (W === 'edit') { renderSubInspector(box, sel.cue && cueById(sel.cue), result, note); return; }
+    box.innerHTML = `${note}<h2>자막</h2>${wsHint('자막 글·시간·스타일은 편집 작업공간에서 바꿔요.', goBtn('edit', '✏️ 편집에서 자막 열기'))}${result}`; bindGo(); return;
+  }
   if (c) {
     const tr = trackOf(c), m = media[c.media] || { name: '?' }, isAudio = tr.kind === 'audio';
-    box.innerHTML = `<h2>클립</h2><p><b>${escapeHtml(m.name)}</b><br><span class="muted">${escapeHtml(tr.name)} · ${fmt(c.start)} – ${fmt(end(c))} (${len(c).toFixed(2)}초)${c.link ? ' · 🔗 연결됨' : ''}</span></p>
-      ${speedHtml(c)}
-      ${isAudio ? field('목소리', `<select id="iVoice">${voices.map((v) => `<option value="${v.name}" ${v.name === c.voice ? 'selected' : ''}>${v.label}</option>`).join('')}${aiOptions(c)}</select>`)
-        + '<div id="aiBox"></div>'
-        + '<div class="row" style="margin:-4px 0 8px"><button id="iSaveChar" title="지금 이 클립의 목소리(프리셋·강도·AI 샘플)를 이름 붙여 저장해 두고 어디서든 같은 목소리로 써요">🎭 이 목소리를 캐릭터로 저장</button></div>'
-        + (ownIntensity(c) ? '' : field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`))
-        + field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
-        + kfHtml(c.vol_keys, '볼륨 키프레임', KF_HINT_CLIP)
-        : '<p class="muted">영상 클립의 소리는 연결된 오디오 클립에서 조절해요.</p>' + colorHtml(c) + videoClipHtml(c)}
-      <div class="row" style="margin-top:10px"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link ? '<button id="iUnlink">연결 해제</button>' : ''}</div>
-      ${result}`;
-    if (isAudio && needsAi(c)) aiCheck(c);
-    if (isAudio) {
+    const info = `<h2>클립</h2><p><b>${escapeHtml(m.name)}</b><br><span class="muted">${escapeHtml(tr.name)} · ${fmt(c.start)} – ${fmt(end(c))} (${len(c).toFixed(2)}초)${c.link ? ' · 🔗 연결됨' : ''}</span></p>`;
+    const acts = `<div class="row" style="margin-top:10px"><button id="iSplit">✂ 자르기</button><button id="iDel">🗑 지우기</button>${c.link && W === 'edit' ? '<button id="iUnlink">연결 해제</button>' : ''}</div>`;
+    const lk = linked(c);
+    let body = '';
+    if (W === 'edit') {
+      body = speedHtml(c) + (isAudio
+        ? field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
+          + wsHint(`목소리 바꾸기·볼륨 키프레임은 오디오 작업공간에서 해요.`, goBtn('audio', '🎚 오디오 열기'))
+        : videoClipHtml(c) + wsHint('밝기·대비·채도는 색 보정 작업공간에서 해요.', goBtn('color', '🎨 색 보정 열기')));
+    } else if (W === 'audio') {
+      body = isAudio
+        ? field('목소리', `<select id="iVoice">${voices.map((v) => `<option value="${v.name}" ${v.name === c.voice ? 'selected' : ''}>${v.label}</option>`).join('')}${aiOptions(c)}</select>`)
+          + '<div id="aiBox"></div>'
+          + '<div class="row" style="margin:-4px 0 8px"><button id="iSaveChar" title="지금 이 클립의 목소리(프리셋·강도·AI 샘플)를 이름 붙여 저장해 두고 어디서든 같은 목소리로 써요">🎭 이 목소리를 캐릭터로 저장</button></div>'
+          + (ownIntensity(c) ? '' : field(`강도 <b id="iIntV">${(+c.intensity).toFixed(1)}</b>`, `<input type="range" id="iInt" min="0.5" max="3" step="0.1" value="${c.intensity}">`))
+          + field(`클립 볼륨 <b id="iGainV">${Math.round(c.gain * 100)}%</b>`, `<input type="range" id="iGain" min="0" max="2" step="0.05" value="${c.gain}">`)
+          + kfHtml(c.vol_keys, '볼륨 키프레임', KF_HINT_CLIP)
+        : wsHint('영상 클립의 소리는 연결된 오디오 클립에서 조절해요.', lk.map((k) => `<button data-pick="${k.id}">🔊 ${escapeHtml((media[k.media] || {}).name || '오디오')} 선택</button>`).join(''));
+    } else {   // color
+      body = isAudio
+        ? wsHint('색 보정은 영상 클립에서 해요.', lk.map((k) => `<button data-pick="${k.id}">🎞 ${escapeHtml((media[k.media] || {}).name || '영상')} 선택</button>`).join(''))
+        : colorHtml(c);
+    }
+    box.innerHTML = `${note}${info}${body}${W === 'color' ? '' : acts}${result}`;
+    box.querySelectorAll('[data-pick]').forEach((b) => (b.onclick = () => { const k = clipById(b.dataset.pick); if (k) selectClip(k); }));
+    bindGo();
+    if (isAudio && W === 'audio' && needsAi(c)) aiCheck(c);
+    if (isAudio && $('iVoice')) {
       $('iVoice').onchange = (e) => { edit(() => (c.voice = e.target.value)); if (!needsAi(c)) lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
       $('iSaveChar').onclick = () => charFromClip(c);
       if ($('iInt')) $('iInt').oninput = (e) => { $('iIntV').textContent = (+e.target.value).toFixed(1); };
       if ($('iInt')) $('iInt').onchange = (e) => { edit(() => (c.intensity = +e.target.value)); lastVoice = { voice: c.voice, intensity: c.intensity }; loadPeaksFor(); };
+    }
+    if (isAudio && $('iGain')) {
       $('iGain').oninput = (e) => { begin(); c.gain = +e.target.value; $('iGainV').textContent = Math.round(c.gain * 100) + '%'; };
       $('iGain').onchange = () => commit();
     }
-    bindSpeed(c);
-    if (isAudio) bindKf(); else { bindColor(c); bindVideoClip(c); }
-    $('iSplit').onclick = () => splitAt(playhead());
-    $('iDel').onclick = () => deleteSelected();
-    if (c.link) $('iUnlink').onclick = () => edit(() => [c, ...linked(c)].forEach((k) => (k.link = null)));
+    if ($('iSp')) bindSpeed(c);
+    if (isAudio) bindKf(); else { if ($('cBr')) bindColor(c); if ($('iTr')) bindVideoClip(c); }
+    if ($('iSplit')) { $('iSplit').onclick = () => splitAt(playhead()); $('iDel').onclick = () => deleteSelected(); }
+    if (c.link && $('iUnlink')) $('iUnlink').onclick = () => edit(() => [c, ...linked(c)].forEach((k) => (k.link = null)));
   } else if (t) {
     const n = (k) => `<input type="checkbox" id="${k}" ${t[k] ? 'checked' : ''}>`;
-    box.innerHTML = `<h2>트랙</h2>${field('이름', `<input type="text" id="tName" value="${escapeHtml(t.name)}">`)}
-      ${t.kind === 'audio' ? `
+    let body;
+    if (t.kind === 'audio') {
+      body = W === 'color' ? wsHint('오디오 트랙은 색 보정과 관련이 없어요.', goBtn('audio', '🎚 오디오 열기'))
+        : W === 'audio' ? `
         <label class="check">${n('voice')} 보이스 트랙 (다른 트랙을 줄이는 기준)</label>
         ${field(`트랙 볼륨 <b>${Math.round(t.volume * 100)}%</b>`, `<input type="range" id="tVol" min="0" max="2" step="0.05" value="${t.volume}">`)}
         <h2 style="margin-top:14px">영상에 녹이기</h2>
@@ -1414,21 +1505,39 @@ function renderInspector() {
         <label class="check">${n('level')} 크기 고르게</label>
         <label class="check">${n('gate')} 말 사이 잡음 줄이기</label>
         <label class="check">${n('tone')} 톤 다듬기</label>
-        ${kfHtml(t.vol_keys, '트랙 볼륨 키프레임', KF_HINT_TRACK)}` : `<label class="check">${n('mute')} 숨기기</label>`}
-      <div class="row" style="margin-top:10px"><button id="tDel">트랙 지우기</button></div>${result}`;
+        ${kfHtml(t.vol_keys, '트랙 볼륨 키프레임', KF_HINT_TRACK)}`
+        : field(`트랙 볼륨 <b>${Math.round(t.volume * 100)}%</b>`, `<input type="range" id="tVol" min="0" max="2" step="0.05" value="${t.volume}">`)
+          + wsHint('리버브·잡음 줄이기·키프레임은 오디오 작업공간에서 해요.', goBtn('audio', '🎚 오디오 열기'));
+    } else {
+      body = W === 'audio' ? wsHint('영상 트랙에는 소리 설정이 없어요.') : `<label class="check">${n('mute')} 숨기기</label>`;
+    }
+    box.innerHTML = `${note}<h2>트랙</h2>${field('이름', `<input type="text" id="tName" value="${escapeHtml(t.name)}">`)}${body}
+      ${W === 'edit' ? `<div class="row" style="margin-top:10px"><button id="tDel">트랙 지우기</button></div>` : ''}${result}`;
+    bindGo();
     $('tName').onchange = (e) => edit(() => (t.name = e.target.value));
     for (const k of ['voice', 'level', 'gate', 'tone', 'mute']) if ($(k)) $(k).onchange = (e) => edit(() => (t[k] = e.target.checked));
     const slide = (id, key, lbl) => { if (!$(id)) return; $(id).oninput = (e) => { begin(); t[key] = +e.target.value; if (lbl) $(lbl.id).textContent = lbl.fmt(t[key]); }; $(id).onchange = () => commit(); };
     slide('tVol', 'volume');
     slide('tRoom', 'room', { id: 'tRoomV', fmt: (v) => Math.round(v * 100) + '%' });
     slide('tDuck', 'duck', { id: 'tDuckV', fmt: (v) => (v ? '-' + Math.round(15 * v) + 'dB' : '끔') });
-    $('tDel').onclick = () => removeTrack(t.id);
-    if (t.kind === 'audio') bindKf();
+    if ($('tDel')) $('tDel').onclick = () => removeTrack(t.id);
+    if (t.kind === 'audio' && W === 'audio') bindKf();
   } else {
-    box.innerHTML = `<h2>프로젝트</h2><p class="muted">길이 ${fmt(projectLength())} · 클립 ${project.clips.length}개</p>
-      <p class="muted">클립을 누르면 목소리·볼륨을, 트랙 이름을 누르면 트랙 효과를 바꿀 수 있어요.</p>
-      <div class="row"><button id="pNew">새 프로젝트</button></div>${result}`;
-    $('pNew').onclick = () => { if (confirmTwice($('pNew'), '한 번 더 누르면 타임라인을 비워요')) edit(() => { project = defaultProject(); sel = { clip: null, track: null }; }); };
+    let body;
+    if (W === 'audio') {
+      const ats = project.tracks.filter((k) => k.kind === 'audio');
+      body = `<h2>믹서</h2>${ats.length ? ats.map((k) => `<div class="mixrow" data-trk="${k.id}"><span>${escapeHtml(k.name || '오디오')}${k.voice ? ' 🎙' : ''}</span><b>${Math.round(k.volume * 100)}%</b>${k.mute ? '<i>꺼짐</i>' : ''}</div>`).join('') : '<p class="muted">오디오 트랙이 없어요.</p>'}
+        <p class="muted">트랙 이름이나 오디오 클립을 누르면 목소리·볼륨·소리 효과를 바꿀 수 있어요.</p>`;
+    } else if (W === 'color') {
+      body = `<h2>색 보정</h2><p class="muted">타임라인에서 영상 클립을 누르면 밝기·대비·채도·색온도를 바꿀 수 있어요.</p>`;
+    } else {
+      body = `<h2>프로젝트</h2><p class="muted">길이 ${fmt(projectLength())} · 클립 ${project.clips.length}개</p>
+        <p class="muted">클립을 누르면 속도·전환·화면 배치를, 자막 줄을 누르면 자막을 바꿀 수 있어요.</p>
+        <div class="row"><button id="pNew">새 프로젝트</button></div>`;
+    }
+    box.innerHTML = `${note}${body}${result}`;
+    box.querySelectorAll('[data-trk]').forEach((d) => (d.onclick = () => { const k = project.tracks.find((x) => x.id === d.dataset.trk); if (k) selectTrack(k); }));
+    if ($('pNew')) $('pNew').onclick = () => { if (confirmTwice($('pNew'), '한 번 더 누르면 타임라인을 비워요')) edit(() => { project = defaultProject(); sel = { clip: null, track: null }; }); };
   }
 }
 const armedAt = new WeakMap();
@@ -2312,10 +2421,14 @@ function applyWorkspace(name) {
   if (name === 'shorts') { ui.guides = true; $('guideChk').checked = true; if (!SHORT.on) setShort(true); }
   else if (SHORT.on) setShort(false);
   setDock('insp'); applyLayout(); renderHeads(); save(); syncWs();
-  if (name === 'color') {   // 색 보정 패널을 바로 보이게
-    if (!clipById(sel.clip)) { const v = project.clips.find((c) => (trackOf(c) || {}).kind === 'video'); if (v) selectClip(v); }
-    setTimeout(() => { const h = [...$('inspector').querySelectorAll('h2')].find((x) => x.textContent.includes('색 보정')); if (h) h.scrollIntoView({ block: 'start' }); }, 30);
+  if (name === 'color') {   // 색 보정은 영상 클립이 필요해요
+    const cur = clipById(sel.clip);
+    if (!cur || (trackOf(cur) || {}).kind !== 'video') { const v = (cur && linked(cur).find((k) => (trackOf(k) || {}).kind === 'video')) || project.clips.find((k) => (trackOf(k) || {}).kind === 'video'); if (v) { selectClip(v); return; } }
+  } else if (name === 'audio') {   // 오디오는 소리 클립이 필요해요
+    const cur = clipById(sel.clip);
+    if (cur && (trackOf(cur) || {}).kind === 'video') { const a = linked(cur).find((k) => (trackOf(k) || {}).kind === 'audio'); if (a) { selectClip(a); return; } }
   }
+  if (!SHORT.on) renderInspector();
 }
 document.querySelectorAll('#wsTabs button').forEach((b) => (b.onclick = () => applyWorkspace(b.dataset.ws)));
 
@@ -2414,7 +2527,7 @@ const mediaToTl = (c, m) => c.start + (m - c.src_in) / c.speed;
 async function aiSubs(say) {
   const c = aiClip('audio');
   const kara = $('aiSubKara').checked;
-  if (kara) edit(() => Object.assign(project.subtitle_style, SUB_PRESETS['쇼츠 낱말']));
+  if (kara) edit(() => Object.assign(project.subtitle_style, SUB_RESET, SUB_PRESETS['쇼츠 낱말']));
   const res = await aiJob('/api/ai/transcribe', { media: c.media, lang: $('aiSubLang').value, max_chars: kara || project.subtitle_style.karaoke ? 14 : 28 }, say);
   const cues = [];
   for (const q of res.cues) {
@@ -2527,7 +2640,7 @@ async function aiTts(say) {
   const text = $('aiTtsText').value.trim();
   if (!text) throw new Error('읽을 글을 입력해 주세요.');
   const res = await aiJob('/api/ai/tts', { text, lang: $('aiTtsLang').value, rate: +$('aiTtsRate').value, emotion: $('aiTtsEmo').value,
-    level: +$('aiTtsEmoLv').value, character: $('aiTtsChar').value }, say);
+    level: +$('aiTtsEmoLv').value, ...voiceArgs($('aiTtsChar').value) }, say);
   media[res.media.id] = res.media; renderBin();
   const t = playhead(), tr = freeAudioTrack(t, t + res.media.duration, armedTrack()) || armedTrack();
   placeMedia(res.media.id, tr, t);
@@ -2552,7 +2665,7 @@ async function aiDub(say) {
   if (!$('aiDubVoice').checked) return `✅ ${AI_LANGS[dst]} 번역 자막 ${cues.length}개를 만들었어요. 미리보기·내보내기에는 ${AI_LANGS[dst]} 자막만 나와요.`;
   say('번역한 문장을 읽는 중…');
   const res = await aiJob('/api/ai/dub', { cues: cues.map(({ start, end: e, text, emotion }) => ({ start, end: e, text, emotion })), lang: dst, rate: +$('aiDubRate').value,
-    emotion: $('aiDubEmo').value, character: $('aiDubChar').value }, say);
+    emotion: $('aiDubEmo').value, ...voiceArgs($('aiDubChar').value) }, say);
   media[res.media.id] = res.media; renderBin();
   let track = freeAudioTrack(0, res.media.duration, armedTrack());
   if (!track) { track = newTrack('audio', { name: `더빙 ${dst}`, voice: true }); edit(() => project.tracks.push(track)); }
@@ -2711,7 +2824,21 @@ function aiDuckOff() {
 }
 
 // ---- 11. 보이스 캐릭터
-const charOpts = (sel) => `<option value="">(없음 — 읽는 엔진 목소리 그대로)</option>` + chars.map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>🎭 ${escapeHtml(c.name)}</option>`).join('');
+// 읽기·더빙의 목소리 목록: 기본 엔진 / 저장한 🎭 캐릭터(c:id) / 보관함 소리 파일을 샘플 목소리로(s:id)
+const charOpts = (sel) => {
+  const smp = Object.values(media).filter((m) => m.has_audio);
+  return `<option value="">기본 목소리 (읽는 엔진 그대로)</option>`
+    + (chars.length ? `<optgroup label="🎭 보이스 캐릭터">${chars.map((c) => `<option value="c:${c.id}" ${'c:' + c.id === sel ? 'selected' : ''}>🎭 ${escapeHtml(c.name)}${c.ref ? ' (AI 샘플)' : ''}</option>`).join('')}</optgroup>` : '')
+    + (smp.length ? `<optgroup label="📁 샘플 목소리로 바꿔 읽기 (학습 없이 · AI 변환)">${smp.map((m) => `<option value="s:${m.id}" ${'s:' + m.id === sel ? 'selected' : ''}>📁 ${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('')}</optgroup>` : '');
+};
+const voiceArgs = (v) => (v.startsWith('c:') ? { character: v.slice(2) } : v.startsWith('s:') ? { sample: v.slice(2) } : {});
+function refreshVoiceOpts() {
+  for (const id of ['aiTtsChar', 'aiDubChar']) { const el = $(id); if (el) el.innerHTML = charOpts(el.value); }
+  const v = $('aiTtsChar').value, n = $('aiVoiceNote');
+  n.textContent = !v ? '지금은 컴퓨터 기본 목소리로 읽어요. 원하는 목소리(더빙 성우·내 목소리 등)로 읽으려면 그 사람의 10~30초 샘플을 올리거나, 저장한 🎭 캐릭터를 고르세요. 학습 없이 바로 바뀌어요.'
+    : v.startsWith('s:') ? `읽은 뒤 샘플(${(media[v.slice(2)] || {}).name || '?'})의 목소리로 AI 변환해요 (Seed-VC, 처음엔 모델 내려받기로 오래 걸려요). 샘플이 깨끗할수록 비슷해요.`
+    : '읽은 뒤 이 캐릭터의 목소리로 바꿔요. AI 샘플이 들어 있으면 AI 음성 변환이 함께 쓰여요.';
+}
 async function loadChars() {
   chars = await (await fetch('/api/characters')).json().catch(() => []);
   renderChars();
@@ -2722,7 +2849,7 @@ function renderChars() {
   $('aiChars').innerHTML = chars.length ? chars.map((c) => `<div class="chl"><div class="t">🎭 ${escapeHtml(c.name)}<small>${c.preset === 'original' ? '' : escapeHtml(presetLabel(c.preset)) + ' ×' + (+c.intensity).toFixed(1)}${c.ref ? ' · AI 샘플: ' + escapeHtml((media[c.ref] || {}).name || '?') : ''}${c.preset === 'original' && !c.ref ? '변조 없음' : ''}</small></div>
     <button data-ch="${c.id}" data-act="use" title="고른 클립(또는 재생 위치의 클립)의 목소리로 적용">적용</button><button data-ch="${c.id}" data-act="edit">수정</button><button data-ch="${c.id}" data-act="del">삭제</button></div>`).join('')
     : '<p class="muted">아직 없어요. 아래에서 만들거나, 클립 속성의 "🎭 이 목소리를 캐릭터로 저장"을 눌러요.</p>';
-  for (const [id, v] of [['aiTtsChar', $('aiTtsChar').value], ['aiDubChar', $('aiDubChar').value]]) $(id).innerHTML = charOpts(v);
+  refreshVoiceOpts();
 }
 function fillCharForm(o = {}) {
   const pre = voices.filter((v) => !v.character && v.name !== 'original');
@@ -2779,6 +2906,28 @@ $('aiEmoLv').oninput = (e) => ($('aiEmoV').textContent = '×' + (+e.target.value
 $('aiTtsEmoLv').oninput = (e) => ($('aiTtsEmoV').textContent = '×' + (+e.target.value).toFixed(1));
 $('aiDuckAmt').oninput = (e) => ($('aiDuckV').textContent = Math.round(+e.target.value * 100) + '%');
 
+$('aiTtsChar').onchange = refreshVoiceOpts;
+$('aiSampleUp').onclick = () => $('aiSampleIn').click();
+$('aiSampleIn').onchange = async (e) => {
+  const out = await uploadFiles([...e.target.files], {}); e.target.value = '';
+  const m = out.find((x) => x.has_audio); if (!m) return;
+  refreshVoiceOpts(); $('aiTtsChar').value = 's:' + m.id; refreshVoiceOpts();
+  $('aiSampleUp').closest('section').querySelector('.aimsg').textContent = `✅ '${m.name}'을(를) 샘플 목소리로 골랐어요. ${m.duration > 40 ? '샘플이 길어서 앞부분 위주로 쓰여요. 10~30초가 가장 좋아요.' : ''}`;
+};
+$('aiTtsPrev').onclick = async () => {
+  if (aiBusy) return;
+  const out = $('aiTtsPrev').closest('section').querySelector('.aimsg'), say = (m, err) => { out.textContent = m; out.className = 'aimsg' + (err ? ' err' : ''); };
+  const text = $('aiTtsText').value.trim().slice(0, 60); if (!text) return say('읽을 글을 먼저 입력해 주세요.', true);
+  aiBusy = true; $('aiTtsPrev').disabled = true;
+  try {
+    const res = await aiJob('/api/ai/tts', { text, lang: $('aiTtsLang').value, rate: +$('aiTtsRate').value, emotion: $('aiTtsEmo').value, level: +$('aiTtsEmoLv').value, ...voiceArgs($('aiTtsChar').value) }, say);
+    say('▶ 재생 중… (타임라인에는 넣지 않았어요)');
+    const a = new Audio(`/api/media/${res.media.id}/file`);
+    a.onended = a.onerror = () => { fetch(`/api/media/${res.media.id}`, { method: 'DELETE' }); say('미리듣기 끝. 마음에 들면 [읽어서 넣기]를 누르세요.'); };
+    await a.play();
+  } catch (e) { say('⚠ ' + (e.message || e), true); }
+  finally { aiBusy = false; $('aiTtsPrev').disabled = false; }
+};
 const AI_SECTIONS = [
   ['aiS1', aiSubs], ['aiS2', aiCutScan], ['aiS2b', aiCutApply], ['aiS3', aiSceneScan], ['aiS3b', aiSceneApply],
   ['aiS4', aiDenoise], ['aiS5', aiTts], ['aiS5b', aiTtsPlan], ['aiS6', aiDub],
@@ -2865,8 +3014,16 @@ function layoutShort() {
   }
   const set = (el, o) => { for (const [k, v] of Object.entries(o)) { const s = typeof v === 'number' ? v + 'px' : v; if (el.style[k] !== s) el.style[k] = s; } };
   set(vp, { width: vw, height: vh });
+  vp.classList.toggle('fit', !!c.fit); if (c.fit) paintFitBg();
   set(frameEl, { width: fw, height: fh, left, top });
   paintOverlay(vw, vh);
+}
+// '전체 보이게' 미리보기: 내보내기처럼 같은 화면을 흐리게 키워 위아래 빈 곳을 채웁니다
+const fitCtx = $('fitBg').getContext('2d');
+function paintFitBg() {
+  const v = frameEl.querySelector('video.show:not(.pip)'); if (!v || !v.videoWidth) return;
+  const W = 54, H = 96, k = Math.max(W / v.videoWidth, H / v.videoHeight), w = v.videoWidth * k, h = v.videoHeight * k;
+  try { fitCtx.drawImage(v, (W - w) / 2, (H - h) / 2, w, h); } catch {}
 }
 let ovlKey = '';
 function paintOverlay(vw, vh) {
@@ -2953,15 +3110,15 @@ function renderShortPanel() {
   box.innerHTML = `<div id="shortPanel"><h2>쇼츠 · 릴스</h2>
     <div class="tabs">${tab('shorts')}${tab('reels')}</div>
     <p class="tip">세로(9:16) 화면에서 앱 버튼·캡션에 가려지는 곳(빗금)을 보면서 구도를 잡고, 포맷마다 따로 저장돼요. 미리보기를 끌면 위치, 휠을 굴리면 확대. 앱 화면은 직접 만든 목업이라 실제 앱과 조금 다를 수 있어요.</p>
-    <label class="check"><input type="checkbox" id="shOvl" ${SHORT.ovl ? 'checked' : ''}> 앱 화면(버튼·캡션) 겹쳐 보기</label>
-    <label class="check"><input type="checkbox" id="shZones" ${SHORT.zones ? 'checked' : ''}> 가려지는 영역 표시</label>
-    <label class="check"><input type="checkbox" id="shSafe" ${c.safe ? 'checked' : ''}> 자막을 안전 영역 안으로 옮기기</label>
     <h2 class="sub">화면 맞추기</h2>
     ${field('방식', `<select id="shFit"><option value="0" ${c.fit ? '' : 'selected'}>꽉 채우기 (자르기)</option><option value="1" ${c.fit ? 'selected' : ''}>전체 보이게 (위아래 흐린 배경)</option></select>`)}
     ${c.fit ? '' : `${field(`확대 <b id="shZoomV">×${c.zoom.toFixed(2)}</b>`, `<input type="range" id="shZoom" min="1" max="5" step="0.01" value="${c.zoom}">`)}
     ${field('가로 위치', `<input type="range" id="shCx" min="0" max="1" step="0.005" value="${c.cx}">`)}
     ${field('세로 위치', `<input type="range" id="shCy" min="0" max="1" step="0.005" value="${c.cy}">`)}
     <div class="row" style="margin-bottom:10px"><button id="shReset">구도 되돌리기</button></div>`}
+    <label class="check"><input type="checkbox" id="shOvl" ${SHORT.ovl ? 'checked' : ''}> 앱 화면(버튼·캡션) 겹쳐 보기</label>
+    <label class="check"><input type="checkbox" id="shZones" ${SHORT.zones ? 'checked' : ''}> 가려지는 영역 표시</label>
+    <label class="check"><input type="checkbox" id="shSafe" ${c.safe ? 'checked' : ''}> 자막을 안전 영역 안으로 옮기기</label>
     ${c.fit ? '' : `<h2 class="sub">자동 리프레임</h2>
     <p class="tip">사람 얼굴(없으면 몸)을 따라가며 9:16 화면 위치를 자동으로 움직여요. 정한 구간(아래 '길이 줄이기')에서 한 번 분석해요.</p>
     <div class="row rf"><button id="shRf" class="primary">🎯 사람 따라가기</button>${c.track.length ? '<button id="shRfOff">끄기</button>' : ''}</div>

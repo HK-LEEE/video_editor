@@ -740,6 +740,12 @@ def make_router(ws: Workspace) -> APIRouter:
     def media_file(mid: str):
         return FileResponse(ws.media_file(mid))
 
+    @router.delete("/media/{mid}")
+    def media_delete(mid: str):
+        ws.meta(mid)
+        remove_media(ws, mid)
+        return {"ok": True}
+
     @router.get("/media/{mid}/peaks")
     def media_peaks(mid: str, voice: str = ORIGINAL, intensity: float = 1.0):
         return {"rate": PEAKS_PER_S, "peaks": peaks(clip_audio(ws, mid, voice, intensity))}

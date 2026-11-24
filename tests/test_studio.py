@@ -398,3 +398,27 @@ def test_character_render_and_tts_through_character(api, monkeypatch):
 def test_detect_catches_conjugated_endings():
     for text, emo in [("기쁜 날입니다", "happy"), ("너무 슬픈 하루였습니다", "sad"), ("화가 났습니다", "angry"), ("즐거웠어요", "happy")]:
         assert emotion.detect(text, "ko")[0] == emo
+
+
+def test_ass_new_subtitle_style_fields():
+    from video_editor.subtitles import Cue, SubtitleStyle, to_ass
+    cues = [Cue(id="a", start=0, end=2, text="hello world")]
+    st = SubtitleStyle(italic=True, shadow=0.1, spacing=0.05, upper=True, glow=0.8, bg_opacity=0.7, box_pad=0.4, size=0.05)
+    ass = to_ass(cues, st, 1080, 1920)
+    style = next(l for l in ass.splitlines() if l.startswith("Style: Text"))
+    f = style.split(",")
+    assert f[8] == "-1"                       # Italic
+    assert float(f[13]) > 0                   # Spacing
+    assert float(f[17]) > 0                   # Shadow
+    assert "HELLO WORLD" in ass               # upper
+    assert "\\blur" in next(l for l in ass.splitlines() if "Text,,0,0,0,," in l)   # glow only on text
+    assert "\\blur" not in next(l for l in ass.splitlines() if ",Box,," in l)
+    box = next(l for l in ass.splitlines() if l.startswith("Style: Box"))
+    assert float(box.split(",")[16]) == round(0.05 * 1920 * 0.4, 1)   # 상자 여백 = 글자 크기 × box_pad
+
+
+def test_old_subtitle_style_defaults_keep_ass_unchanged():
+    from video_editor.subtitles import Cue, SubtitleStyle, to_ass
+    ass = to_ass([Cue(id="a", start=0, end=1, text="x")], SubtitleStyle(), 1280, 720)
+    style = next(l for l in ass.splitlines() if l.startswith("Style: Text")).split(",")
+    assert style[8] == "0" and style[13] == "0.0" and style[17] == "0.0"

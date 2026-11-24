@@ -58,6 +58,7 @@ class TtsReq(BaseModel):
     emotion: str = "neutral"      # neutral | auto(글에서 알아챔) | happy ... — 문장 앞의 [화남] 표시가 가장 우선
     level: float = Field(1.0, ge=0.0, le=2.0)   # 감정의 세기
     character: str = ""           # 보이스 캐릭터 id (비우면 읽는 엔진의 목소리 그대로)
+    sample: str = ""              # 캐릭터 없이 샘플 목소리(보관함 소리 파일 id)로 바로 바꿔 읽기 (AI 음성 변환)
 
 
 class TranslateReq(BaseModel):
@@ -80,6 +81,7 @@ class DubReq(BaseModel):
     emotion: str = "neutral"
     level: float = Field(1.0, ge=0.0, le=2.0)
     character: str = ""
+    sample: str = ""
 
 
 class HighlightsReq(BaseModel):
@@ -164,7 +166,12 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             x, _ = sf.read(wav, dtype="float32")
         return x
 
-    def get_character(cid: str) -> characters.Character | None:
+    def get_character(cid: str, sample: str = "") -> characters.Character | None:
+        if not cid and sample:   # 저장한 캐릭터가 없어도 샘플 소리만 고르면 그 목소리로 바꿔 줍니다 (학습 없이, Seed-VC 제로샷)
+            audio_media(sample)
+            if not ai_voice_ready():
+                raise HTTPException(503, "샘플 목소리로 바꾸려면 AI 음성 변환이 필요해요. 터미널에서 `bash scripts/setup_ai_voice.sh`를 실행하세요.")
+            return characters.Character(id="sample", name="샘플 목소리", ref=sample)
         if not cid:
             return None
         _check_id(cid)
@@ -398,7 +405,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             raise HTTPException(503, "읽어 주는 엔진이 없어요 (맥은 기본 내장, 리눅스는 espeak-ng 설치).")
         if b.emotion not in ("auto", "") and emotion.normalize(b.emotion) is None:
             raise HTTPException(400, f"모르는 감정: {b.emotion}")
-        ch = get_character(b.character)
+        ch = get_character(b.character, b.sample)
         plain = (b.emotion in ("neutral", "") and not emotion.TAG.search(b.text) and ch is None)
 
         def work():
@@ -416,7 +423,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             return {"media": add_media(ws, tmp, f"읽기 {b.lang} · {label}{suffix}.wav"),
                     "spans": [{**sp, "label": emotion.EMOTIONS[sp["emotion"]]} for sp in spans]}
 
-        return launch("tts", f"{b.lang}:{b.rate}:{b.voice}:{b.emotion}:{b.level}:{b.character}:{hash(b.text)}", work)
+        return launch("tts", f"{b.lang}:{b.rate}:{b.voice}:{b.emotion}:{b.level}:{b.character}:{b.sample}:{hash(b.text)}", work)
 
     @router.post("/ai/translate")
     def translate(b: TranslateReq):
@@ -434,13 +441,13 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         for e in [b.emotion, *(c.emotion for c in b.cues)]:
             if e not in ("", "auto") and emotion.normalize(e) is None:
                 raise HTTPException(400, f"모르는 감정: {e}")
-        ch = get_character(b.character)
+        ch = get_character(b.character, b.sample)
 
         def work():
             return {"media": dub_media(ws, b, synth_to_array, through_character(ch) if ch else None, ch.name if ch else "")}
 
         key = hash(tuple((c.start, c.end, c.text, c.emotion) for c in b.cues))
-        return launch("dub", f"{b.lang}:{b.rate}:{b.emotion}:{b.level}:{b.character}:{key}", work)
+        return launch("dub", f"{b.lang}:{b.rate}:{b.emotion}:{b.level}:{b.character}:{b.sample}:{key}", work)
 
 
 def dub_media(ws: Workspace, b: DubReq, synth_to_array, post=None, who: str = "") -> dict:
