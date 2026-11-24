@@ -34,6 +34,7 @@ class Cue(BaseModel):
     source: Literal["manual", "ai", "translation"] = "manual"
     words: list[CueWord] = []                       # 있으면 낱말별 강조(카라오케) 자막에 씁니다
     emotion: str = ""                               # 더빙할 때 이 문장을 읽는 감정 ("" = 자동)
+    color: str = ""                                 # 이 자막만 다른 글자색 (#RRGGBB, ""이면 전체 스타일을 따름)
 
 
 class SubtitleStyle(BaseModel):
@@ -97,6 +98,11 @@ def _ass_rgb(hex_color: str, alpha: float = 1.0) -> str:
     r, g, b = hex_color[1:3], hex_color[3:5], hex_color[5:7]
     a = int(round((1 - alpha) * 255))
     return f"&H{a:02X}{b}{g}{r}".upper()
+
+
+def _ass_bgr(hex_color: str) -> str:
+    """#RRGGBB → 글 중간에 쓰는 색 태그 값 &HBBGGRR&."""
+    return f"&H{hex_color[5:7]}{hex_color[3:5]}{hex_color[1:3]}&".upper()
 
 
 def _ass_text(text: str) -> str:
@@ -165,7 +171,8 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
     for c in active_cues(cues, lang, length):
         end = c.end if length is None else min(c.end, length)
         shown = c.text.upper() if style.upper else c.text
-        text = pos + _ass_text(shown)
+        own = f"{{\\c{_ass_bgr(c.color)}}}" if HEX.match(c.color or "") and not style.karaoke else ""   # 이 자막만의 글자색
+        text = pos + own + _ass_text(shown)
         words = karaoke_words(c) if kara else None
         top = pos + karaoke_text(c, words, c.lang in ("ja", "zh"), style.upper) if words else text
         if style.bg_opacity > 0:

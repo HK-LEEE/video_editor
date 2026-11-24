@@ -392,6 +392,6 @@ def test_endings_and_templates_crud(api):
     assert prev["status"] == "done" and c.get(prev["result"]["url"]).status_code == 200
     assert c.post("/api/templates", json={"name": "t", "ending": "zzz"}).status_code == 400
     t = c.post("/api/templates", json={"name": "t", "ending": e["id"]}).json()
-    assert [x["id"] for x in c.get("/api/templates").json()] == [t["id"]]
+    assert [x["id"] for x in c.get("/api/templates").json() if not x["builtin"]] == [t["id"]]
     c.delete(f"/api/templates/{t['id']}")
-    assert c.get("/api/templates").json() == []
+    assert [x for x in c.get("/api/templates").json() if not x["builtin"]] == []

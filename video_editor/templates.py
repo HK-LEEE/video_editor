@@ -44,9 +44,25 @@ class HookStyle(BaseModel):
     end: float | None = 3.0
 
 
+class Anim(BaseModel):
+    """템플릿 안에 바로 들어 있는 짧은 애니메이션 카드 (인트로·아웃트로 카드, 엔딩). `{channel}`은 채널 이름으로 바뀝니다."""
+    kind: str = "pop"
+    text: str = Field("", max_length=40)
+    sub: str = Field("", max_length=40)
+    accent: str = "#ffd23f"
+    bg1: str = "#1b1030"
+    bg2: str = "#3a1c5e"
+    duration: float = Field(1.6, ge=0.6, le=8.0)
+
+
 class Template(BaseModel):
     id: str = ""
     name: str = Field(min_length=1, max_length=40)
+    desc: str = ""                           # 한 줄 설명 (샘플 템플릿)
+    builtin: bool = False                    # 앱에 들어 있는 샘플 템플릿 (지울 수 없어요)
+    intro_card: Anim | None = None           # 직접 그리는 인트로 카드 (intro 미디어가 없을 때)
+    outro_card: Anim | None = None
+    ending_card: Anim | None = None          # 직접 그리는 엔딩 (ending 프리셋이 없을 때)
     subtitle_style: SubtitleStyle | None = None
     hook: HookStyle | None = None
     intro: str | None = None                 # 보관함 미디어 id
@@ -234,8 +250,8 @@ def _place(ws: Workspace, p: Project, mid: str, at: float, tag: str, transition:
     return dur
 
 
-def _ending_media(ws: Workspace, preset: EndingPreset, W: int, H: int) -> str:
-    params = preset.model_dump(exclude={"id", "name"})
+def _anim_media(ws: Workspace, params: dict, label: str, W: int, H: int) -> str:
+    """애니메이션 카드를 (같은 설정은 한 번만) 만들어 보관함에 숨겨 두고 그 미디어 id를 돌려줍니다."""
     mid = endings_mod.ending_key(params, W, H)
     meta_p = ws.meta_path(mid)
     if not meta_p.exists():
@@ -243,12 +259,32 @@ def _ending_media(ws: Workspace, preset: EndingPreset, W: int, H: int) -> str:
         endings_mod.render(out, params, W, H)
         from .editor import probe
         info = probe(out)
-        meta_p.write_text(json.dumps({"id": mid, "name": f"엔딩 · {preset.name}", "file": out.name, "recorded": False,
+        meta_p.write_text(json.dumps({"id": mid, "name": label, "file": out.name, "recorded": False,
                                       "kind": "video", "hidden": True, **info}, ensure_ascii=False))
     return mid
 
 
-def apply_template(ws: Workspace, p: Project, tpl: Template, endings: Store, canvas: tuple[int, int] | None = None) -> Project:
+def _ending_media(ws: Workspace, preset: EndingPreset, W: int, H: int) -> str:
+    return _anim_media(ws, preset.model_dump(exclude={"id", "name"}), f"엔딩 · {preset.name}", W, H)
+
+
+DEFAULT_CHANNEL = "내 채널"
+HOOK_PLACEHOLDER = "여기에 훅 제목"
+
+
+def _fill(text: str, channel: str) -> str:
+    return text.replace("{channel}", channel or DEFAULT_CHANNEL)
+
+
+def _card_params(a: Anim, channel: str) -> dict:
+    d = a.model_dump()
+    d["text"], d["sub"] = _fill(a.text, channel), _fill(a.sub, channel)
+    return d
+
+
+def apply_template(ws: Workspace, p: Project, tpl: Template, endings: Store, canvas: tuple[int, int] | None = None,
+                   channel: str = "", hook_text: str | None = None) -> Project:
+    """hook_text를 주면(빈 글이어도) 훅 제목이 아직 없을 때 그 글로 훅 제목을 하나 넣습니다 (모양은 템플릿 것)."""
     out = p.model_copy(deep=True)
     _strip(out)
     if tpl.subtitle_style:
@@ -258,20 +294,30 @@ def apply_template(ws: Workspace, p: Project, tpl: Template, endings: Store, can
         for o in out.overlays:
             if o.kind == "title":
                 o.y, o.size, o.color, o.bg_color, o.bg_opacity, o.outline = h.y, h.size, h.color, h.bg_color, h.bg_opacity, h.outline
+        if hook_text is not None and not any(o.kind == "title" for o in out.overlays):
+            out.overlays.append(Overlay(id=_uid(), kind="title", text=hook_text.strip() or HOOK_PLACEHOLDER, start=h.start, end=h.end,
+                                        y=h.y, size=h.size, color=h.color, bg_color=h.bg_color, bg_opacity=h.bg_opacity, outline=h.outline))
+    W, H = canvas or canvas_size(ws, out)
     if tpl.intro:
-        d = _place_front(ws, out, tpl.intro, tpl.intro_transition)
+        _place_front(ws, out, tpl.intro, tpl.intro_transition)
+    elif tpl.intro_card:
+        _place_front(ws, out, _anim_media(ws, _card_params(tpl.intro_card, channel), f"인트로 · {tpl.name}", W, H), tpl.intro_transition)
     if tpl.outro:
         _place(ws, out, tpl.outro, project_length(out), "outro", tpl.outro_transition)
+    elif tpl.outro_card:
+        _place(ws, out, _anim_media(ws, _card_params(tpl.outro_card, channel), f"아웃트로 · {tpl.name}", W, H),
+               project_length(out), "outro", tpl.outro_transition)
     if tpl.ending:
         preset = endings.get(tpl.ending)
         if preset is None:
             raise HTTPException(404, "엔딩 프리셋을 찾을 수 없어요.")
-        W, H = canvas or canvas_size(ws, out)
         _place(ws, out, _ending_media(ws, preset, W, H), project_length(out), "ending")
+    elif tpl.ending_card:
+        _place(ws, out, _anim_media(ws, _card_params(tpl.ending_card, channel), f"엔딩 · {tpl.name}", W, H), project_length(out), "ending")
     if tpl.watermark:
         w = tpl.watermark
-        out.overlays.append(Overlay(id=_uid(), kind="watermark", text=w.text, x=w.x, y=w.y, size=w.size, opacity=w.opacity, color=w.color,
-                                    bold=True, outline=0.08, max_width=0.5, tpl="watermark"))
+        out.overlays.append(Overlay(id=_uid(), kind="watermark", text=_fill(w.text, channel), x=w.x, y=w.y, size=w.size, opacity=w.opacity,
+                                    color=w.color, bold=True, outline=0.08, max_width=0.5, tpl="watermark"))
     return out
 
 

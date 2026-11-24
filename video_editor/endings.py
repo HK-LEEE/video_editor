@@ -21,6 +21,14 @@ KINDS = {
     "bell": "알림 종 흔들기",
     "thanks": "시청 감사 + 다음 영상",
 }
+# 인트로·아웃트로 카드(짧은 제목 화면). 템플릿이 쓰고, 엔딩 화면의 '모양' 목록에는 나오지 않습니다.
+CARD_KINDS = {
+    "pop": "통통 튀는 제목 (예능)",
+    "slide": "옆에서 밀려 들어오는 제목 (정보)",
+    "wipe": "띠가 훑고 지나가는 제목 (뉴스)",
+    "fade": "서서히 떠오르는 제목 (감성)",
+    "line": "가는 선이 그어지는 제목 (미니멀)",
+}
 FPS = 30
 DEFAULTS = {"kind": "subscribe", "text": "구독 & 좋아요", "sub": "알림 설정까지!", "accent": "#ff3b3b", "bg1": "#1b1030", "bg2": "#3a1c5e",
             "duration": 3.0}
@@ -86,6 +94,9 @@ def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Gene
     cx, cy = W / 2, H / 2
     kind = p["kind"]
     appear = _ease_back(t / 0.5)
+    if kind in CARD_KINDS:
+        _card(d, im, kind, p, t, W, H, acc, u, cx, cy)
+        return im
     if kind == "subscribe":
         _text_center(d, (cx, cy - u * 0.55), p["text"], u * 0.10, "#ffffff", 3, appear, W)
         bw, bh = u * 0.62, u * 0.2
@@ -147,9 +158,62 @@ def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Gene
     return im
 
 
+def _card(d, im, kind, p, t, W, H, acc, u, cx, cy):
+    """인트로·아웃트로 카드 한 장. 제목(text)과 부제(sub)가 kind마다 다른 움직임으로 나타납니다."""
+    dur = max(float(p["duration"]), 0.5)
+    out = min(1.0, max(0.0, (dur - t) / 0.25))             # 끝나기 0.25초 전부터 사라짐
+    a = lambda x: int(255 * min(1.0, max(0.0, x)) * out)
+    white, soft = (255, 255, 255), (255, 255, 255)
+    title, sub = p["text"], p["sub"]
+    if kind == "pop":
+        s = _ease_back(t / 0.45)
+        bounce = 1 + 0.05 * math.sin(max(0.0, t - 0.45) * 12) * max(0.0, 1 - (t - 0.45) / 0.6)
+        for i in range(6):                                          # 뒤에서 도는 동그라미 장식
+            ang = i * 1.047 + t * 1.3
+            r = u * (0.42 + 0.03 * math.sin(t * 3 + i))
+            x, y = cx + math.cos(ang) * r * 1.1, cy + math.sin(ang) * r * 0.9
+            rad = u * 0.045 * min(1.0, t / 0.4)
+            d.ellipse((x - rad, y - rad, x + rad, y + rad), fill=acc + (int(110 * out),))
+        _text_center(d, (cx, cy - u * 0.04), title, u * 0.15, white + (a(s),), 4, max(0.01, s * bounce), W)
+        bar = u * 0.5 * _ease_out((t - 0.2) / 0.4)
+        d.rounded_rectangle((cx - bar / 2, cy + u * 0.09, cx + bar / 2, cy + u * 0.115), radius=u * 0.012, fill=acc + (a(1),))
+        if sub:
+            _text_center(d, (cx, cy + u * 0.22), sub, u * 0.065, soft + (a((t - 0.5) / 0.3),), 2, 1, W)
+    elif kind == "slide":
+        k = _ease_out(t / 0.5)
+        x = cx - (1 - k) * W * 0.6
+        d.rectangle((0, cy - u * 0.2, W * k * 0.04 + u * 0.03, cy + u * 0.2), fill=acc + (a(1),))
+        _text_center(d, (x, cy - u * 0.04), title, u * 0.12, white + (a(k),), 0, 1, W)
+        if sub:
+            _text_center(d, (cx + (1 - k) * W * 0.5, cy + u * 0.12), sub, u * 0.058, acc + (a(k),), 0, 1, W)
+        d.rectangle((cx - u * 0.35, cy + u * 0.2, cx - u * 0.35 + u * 0.7 * k, cy + u * 0.205), fill=white + (a(0.6),))
+    elif kind == "wipe":
+        k = _ease_out(t / 0.45)
+        y0, y1 = cy - u * 0.13, cy + u * 0.13
+        d.rectangle((0, y0, W * k, y1), fill=acc + (a(1),))
+        shown = max(0.0, (t - 0.25) / 0.3)
+        _text_center(d, (cx, cy), title, u * 0.11, white + (a(shown),), 0, 1, W)
+        d.rectangle((0, y1 + u * 0.02, W * k * 0.6, y1 + u * 0.035), fill=white + (a(0.7),))
+        if sub:
+            _text_center(d, (cx, y1 + u * 0.12), sub, u * 0.055, soft + (a((t - 0.55) / 0.3),), 0, 1, W)
+    elif kind == "fade":
+        k = min(1.0, t / 0.8)
+        d.ellipse((cx - u * 0.6, cy - u * 0.6, cx + u * 0.6, cy + u * 0.6), fill=acc + (int(28 * k * out),))
+        _text_center(d, (cx, cy - u * 0.02 - (1 - _ease_out(k)) * u * 0.03), title, u * 0.1, white + (a(k),), 0, 1, W)
+        if sub:
+            _text_center(d, (cx, cy + u * 0.12), sub, u * 0.055, acc + (a((t - 0.4) / 0.6),), 0, 1, W)
+    else:  # line
+        k = _ease_out(t / 0.5)
+        half = u * 0.36 * k
+        d.rectangle((cx - half, cy - 2, cx + half, cy + 2), fill=white + (a(1),))
+        _text_center(d, (cx, cy - u * 0.075), title, u * 0.085, white + (a((t - 0.2) / 0.4),), 0, 1, W)
+        if sub:
+            _text_center(d, (cx, cy + u * 0.075), sub, u * 0.045, acc + (a((t - 0.4) / 0.4),), 0, 1, W)
+
+
 def render(path, params: dict, W: int, H: int) -> None:
     p = {**DEFAULTS, **params}
-    if p["kind"] not in KINDS:
+    if p["kind"] not in KINDS and p["kind"] not in CARD_KINDS:
         raise ValueError("모르는 엔딩 종류예요.")
     W, H = W // 2 * 2, H // 2 * 2
     n = int(round(float(p["duration"]) * FPS))

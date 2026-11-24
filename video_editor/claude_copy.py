@@ -157,21 +157,23 @@ def _parse_json(out: str) -> dict:
     return json.loads(out)
 
 
-def run_cli(user: str, model: str, timeout: float = CLI_TIMEOUT, runner=None) -> dict:
-    """`claude -p`(헤드리스)로 한 번 물어서 SCHEMA 모양의 dict를 받습니다. 실패하면 RuntimeError(한국어 안내)."""
+def run_cli(user: str, model: str, timeout: float = CLI_TIMEOUT, runner=None, system: str | None = None, schema: dict | None = None) -> dict:
+    """`claude -p`(헤드리스)로 한 번 물어서 schema 모양의 dict를 받습니다 (기본은 문구 SCHEMA). 실패하면 RuntimeError(한국어 안내)."""
+    system = SYSTEM if system is None else system
+    schema = SCHEMA if schema is None else schema
     exe = cli_path()
     if not exe:
         raise RuntimeError(NO_CLI)
     runner = runner or subprocess.run
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}   # 내 로그인으로 돌립니다
-    schema_note = ("\n\n반드시 아래 JSON 스키마를 따르는 JSON 객체 하나만 출력하세요(설명·코드블록 없이).\n" + json.dumps(SCHEMA, ensure_ascii=False))
+    schema_note = ("\n\n반드시 아래 JSON 스키마를 따르는 JSON 객체 하나만 출력하세요(설명·코드블록 없이).\n" + json.dumps(schema, ensure_ascii=False))
     base = [exe, "-p", "--output-format", "json", "--model", model]
-    rich = base + ["--system-prompt", SYSTEM, "--tools", "", "--no-session-persistence", "--disable-slash-commands",
+    rich = base + ["--system-prompt", system, "--tools", "", "--no-session-persistence", "--disable-slash-commands",
                             "--strict-mcp-config", "--setting-sources", "project"]
     with tempfile.TemporaryDirectory() as cwd:          # 프로젝트 폴더의 설정·메모를 읽지 않게 빈 폴더에서 돌립니다
         for args in (rich, base):
             try:
-                r = runner(args, input=(user + schema_note) if args is rich else (SYSTEM + "\n\n" + user + schema_note),
+                r = runner(args, input=(user + schema_note) if args is rich else (system + "\n\n" + user + schema_note),
                            capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env)
             except subprocess.TimeoutExpired as e:
                 raise RuntimeError(f"Claude Code가 {int(timeout)}초 안에 답하지 않았어요. 잠시 뒤에 다시 해 주세요.") from e
@@ -257,3 +259,42 @@ def clean(d: dict) -> dict:
         d[k]["hashtags"] = [t for t in (tag(x) for x in d[k].get("hashtags", [])) if t]
     d.setdefault("thumbnail", {"text": "", "idea": "", "best_time": 0})
     return d
+
+
+def ask(root: Path, system: str, schema: dict, user: str, model: str | None = None, client=None, runner=None,
+        max_tokens: int = 4000) -> dict:
+    """문구 말고 다른 구조화된 답(예: 채팅 편집 계획)이 필요할 때. 방식 선택·오류 안내는 generate와 같아요.
+    기본은 Claude Code 헤드리스(`claude -p`, 도구 없음·빈 폴더·사용자 설정 안 읽음), 대체는 API 키."""
+    model = model or load_settings(root).get("model", DEFAULT_MODEL)
+    if model not in MODELS:
+        model = DEFAULT_MODEL
+    if client is None and engine_for(root) == "cli":
+        return run_cli(user, model, runner=runner, system=system, schema=schema)
+    key, _ = api_key(root)
+    if client is None:
+        if not key:
+            raise RuntimeError(NO_KEY)
+        client = _client(key)
+    try:
+        import anthropic
+        errors = (anthropic.APIError,)
+    except ImportError:
+        errors = ()
+    try:
+        r = client.messages.create(model=model, max_tokens=max_tokens, system=system,
+                                   output_config={"format": {"type": "json_schema", "schema": schema}},
+                                   messages=[{"role": "user", "content": user}])
+    except errors as e:  # type: ignore[misc]
+        status = getattr(e, "status_code", None)
+        if status == 401:
+            raise RuntimeError("API 키가 올바르지 않아요. 키를 다시 확인해 주세요.") from e
+        if status == 429:
+            raise RuntimeError("요청이 너무 많거나 사용 한도에 걸렸어요. 잠시 뒤에 다시 해 주세요.") from e
+        raise RuntimeError(f"Claude 호출에 실패했어요: {getattr(e, 'message', e)}") from e
+    if getattr(r, "stop_reason", "") == "refusal":
+        raise RuntimeError("Claude가 이 요청은 처리하기를 거절했어요. 표현을 바꿔 다시 말해 주세요.")
+    out = next((b.text for b in r.content if getattr(b, "type", "") == "text"), "")
+    try:
+        return _parse_json(out)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise RuntimeError("Claude의 답을 읽지 못했어요. 한 번 더 말해 주세요.") from e

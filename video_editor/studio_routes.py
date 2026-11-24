@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from . import beats as beats_mod
 from . import claude_copy, endings as endings_mod, library, shorts, thumbnail
 from .editor import Project, Workspace, _check_id, canvas_size, clip_len, export_video
+from . import builtin_templates, chat_edit
 from .templates import EndingPreset, ProjectStore, ScopedStore, Template, apply_ending, apply_template, project_from_media
 
 
@@ -61,6 +62,8 @@ class ThumbReq(BaseModel):
 class ApplyReq(BaseModel):
     project: Project
     template_id: str
+    channel: str = Field("", max_length=30)        # 워터마크·인트로 카드에 들어갈 채널 이름 (비우면 '내 채널')
+    hook_text: str | None = Field(None, max_length=60)   # 훅 제목이 없으면 이 글로 하나 넣어요 (빈 글이면 안내 문구)
 
 
 class BatchReq(BaseModel):
@@ -68,11 +71,29 @@ class BatchReq(BaseModel):
     project_ids: list[str] = []
     media_ids: list[str] = []          # 보관함 영상마다 새 프로젝트를 만들어 입힘
     name_prefix: str = ""
+    channel: str = Field("", max_length=30)
 
 
 class EndingApplyReq(BaseModel):
     project: Project
     ending_id: str
+
+
+class ChatPlanReq(BaseModel):
+    project: Project
+    text: str = Field(max_length=600)
+    words: list[chat_edit.Word] = Field([], max_length=20000)   # 낱말 단위 대본 (타임라인 초). 없으면 자막만 봐요
+    history: list[dict] = Field([], max_length=20)
+    playhead: float = 0.0
+    selected: dict | None = None
+    short_range: dict | None = None
+    model: str | None = None
+
+
+class ChatApplyReq(BaseModel):
+    project: Project
+    ops: list[dict] = Field(max_length=chat_edit.MAX_OPS)
+    words: list[chat_edit.Word] = Field([], max_length=20000)
 
 
 class BatchExportReq(BaseModel):
@@ -182,6 +203,40 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
         return launch(work)
 
+    # ---- 글로 편집 채팅
+    def media_names(p: Project) -> dict[str, str]:
+        out = {}
+        for c in p.clips:
+            try:
+                out[c.media] = ws.meta(c.media).get("name", "?")
+            except HTTPException:
+                out[c.media] = "?"
+        return out
+
+    @router.post("/chat-edit/plan")
+    def chat_edit_plan(b: ChatPlanReq):
+        """지시를 편집 계획으로 (프로젝트는 안 바꿔요). Claude가 답하는 동안 몇 초~몇십 초 걸려서 작업으로 돌립니다."""
+        st = claude_copy.public_settings(ws.home)
+        if not st["ready"]:
+            raise HTTPException(503, st["help"])
+        names = media_names(b.project)
+
+        def work():
+            return chat_edit.plan_edit(ws.home, b.project, b.text, b.words, names, b.history, b.playhead, b.selected, b.short_range,
+                                       b.model).model_dump()
+
+        return launch(work)
+
+    @router.post("/chat-edit/apply")
+    def chat_edit_apply(b: ChatApplyReq):
+        """확인한 계획(ops)을 지금 프로젝트에 적용한 새 프로젝트 (화면이 한 번에 받아서 ⌘Z 한 번으로 되돌려요)."""
+        try:
+            r = chat_edit.apply_ops(b.project, b.ops, b.words, media_names(b.project))
+        except (KeyError, TypeError, ValueError) as e:
+            raise HTTPException(400, "편집 계획 모양이 올바르지 않아요.") from e
+        return {"project": r.project.model_dump(), "summaries": r.summaries, "warnings": r.warnings, "short": r.short,
+                "length_before": round(chat_edit.project_length(b.project), 2), "length_after": round(chat_edit.project_length(r.project), 2)}
+
     @router.post("/thumbnail")
     def make_thumbnail(b: ThumbReq):
         p = b.project
@@ -205,12 +260,18 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         return {"file": out.name, "url": f"/api/exports/{out.name}"}
 
     # ---- 템플릿 · 엔딩 프리셋
+    def find_template(tid: str) -> Template | None:
+        return builtin_templates.get_builtin(tid) or templates.get(tid)
+
     @router.get("/templates")
     def list_templates():
-        return [t.model_dump() for t in templates.all()]
+        return [t.model_dump() for t in builtin_templates.all_builtin() + templates.all()]
 
     @router.post("/templates")
     def save_template(t: Template):
+        t.builtin = False
+        if t.id.startswith(builtin_templates.BUILTIN_PREFIX):
+            t.id = ""           # 샘플 템플릿을 고쳐 저장하면 내 템플릿으로 따로 저장해요
         for mid in (t.intro, t.outro):
             if mid:
                 ws.meta(mid)
@@ -224,6 +285,8 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.delete("/templates/{tid}")
     def delete_template(tid: str):
+        if builtin_templates.get_builtin(tid):
+            raise HTTPException(400, "샘플 템플릿은 지울 수 없어요.")
         templates.delete(tid)
         return {"ok": True}
 
@@ -261,19 +324,19 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             raise HTTPException(404, "엔딩 프리셋을 찾을 수 없어요.")
         return apply_ending(ws, b.project, e).model_dump()
 
-    def _apply(p: Project, tid: str, w: Workspace = ws) -> Project:
-        t = templates.get(tid)
+    def _apply(p: Project, tid: str, w: Workspace = ws, channel: str = "", hook_text: str | None = None) -> Project:
+        t = find_template(tid)
         if t is None:
             raise HTTPException(404, "템플릿을 찾을 수 없어요.")
         try:
-            return apply_template(w, p, t, endings)
+            return apply_template(w, p, t, endings, channel=channel, hook_text=hook_text)
         except RuntimeError as e:
             raise HTTPException(500, str(e)) from e
 
     @router.post("/template/apply")
     def template_apply(b: ApplyReq):
         """현재 프로젝트에 템플릿을 입힌 새 프로젝트 (화면이 받아서 바꿉니다)."""
-        return _apply(b.project, b.template_id).model_dump()
+        return _apply(b.project, b.template_id, channel=b.channel.strip(), hook_text=b.hook_text).model_dump()
 
     # ---- 보관한 프로젝트 · 일괄 적용
     @router.get("/projects")
@@ -308,7 +371,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.post("/template/batch")
     def template_batch(b: BatchReq):
-        if templates.get(b.template_id) is None:
+        if find_template(b.template_id) is None:
             raise HTTPException(404, "템플릿을 찾을 수 없어요.")
         if not b.project_ids and not b.media_ids:
             raise HTTPException(400, "입힐 프로젝트나 영상을 골라 주세요.")
@@ -319,7 +382,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
                 try:
                     w = locate(pid)       # 다른 프로젝트에 있는 보관본도 그 프로젝트의 미디어로 입힙니다
                     d, p = store(w).load(pid)
-                    store(w).save(d["name"], _apply(p, b.template_id, w), pid)
+                    store(w).save(d["name"], _apply(p, b.template_id, w, b.channel.strip()), pid)
                     results.append({"id": pid, "name": d["name"], "ok": True, "workspace": w.pid})
                 except HTTPException as e:
                     results.append({"id": pid, "name": pid, "ok": False, "error": str(e.detail)})
@@ -327,7 +390,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
                 try:
                     _check_id(mid)
                     m = ws.meta(mid)
-                    saved = store().save(f"{b.name_prefix}{Path(m['name']).stem}", _apply(project_from_media(ws, mid), b.template_id))
+                    saved = store().save(f"{b.name_prefix}{Path(m['name']).stem}", _apply(project_from_media(ws, mid), b.template_id, channel=b.channel.strip()))
                     results.append({"id": saved["id"], "name": saved["name"], "ok": True})
                 except HTTPException as e:
                     results.append({"id": mid, "name": mid, "ok": False, "error": str(e.detail)})
