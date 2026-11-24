@@ -75,7 +75,9 @@ def _bell(size: int, color: str, angle: float) -> Image.Image:
     d.rounded_rectangle((c - size * .44, size * .7, c + size * .44, size * .78), radius=size * .04, fill=col)
     d.ellipse((c - size * .09, size * .76, c + size * .09, size * .94), fill=col)                     # 추
     d.ellipse((c - size * .05, size * .04, c + size * .05, size * .14), fill=col)                    # 꼭지
-    return im.rotate(angle, resample=Image.BICUBIC, center=(c, size * .08))
+    pad = int(size * 0.3)       # 흔들 때 가장자리가 잘리지 않게 여백을 둡니다
+    big = Image.new("RGBA", (size + 2 * pad, size + 2 * pad), (0, 0, 0, 0)); big.paste(im, (pad, pad))
+    return big.rotate(angle, resample=Image.BICUBIC, center=(c + pad, size * .08 + pad))
 
 
 def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Generator) -> Image.Image:
@@ -106,7 +108,7 @@ def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Gene
         if t >= 1.4:              # 종이 울립니다
             ang = math.sin((t - 1.4) * 22) * 18 * max(0, 1 - (t - 1.4) / 1.2)
             b = _bell(int(u * 0.2), "#ffd23f", ang)
-            im.paste(b, (int(cx - b.width / 2), int(cy + u * 0.28)), b)
+            im.paste(b, (int(cx - b.width / 2), int(cy + u * 0.28) - (b.width - int(u * 0.2)) // 2), b)
             _text_center(d, (cx, cy + u * 0.62), p["sub"], u * 0.065, "#ffffff", 2, min(1, (t - 1.4) / 0.3 + 0.01), W)
     elif kind == "heart":
         beat = 1 + 0.08 * math.sin(t * 9) * (1 if t > 0.5 else 0)
@@ -124,7 +126,7 @@ def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Gene
     elif kind == "bell":
         ang = math.sin(t * 18) * 22 * max(0, 1 - max(0, t - 0.4) / 2.2) * min(1, t / 0.2)
         b = _bell(int(u * 0.55 * min(1, _ease_back(t / 0.5) + 0.001)) + 2, "#ffd23f", ang)
-        im.paste(b, (int(cx - b.width / 2), int(cy - u * 0.45)), b)
+        im.paste(b, (int(cx - b.width / 2), int(cy - u * 0.45) - (b.width - int(u * 0.55 * min(1, _ease_back(t / 0.5) + 0.001)) - 2) // 2), b)
         if t > 0.6:
             for side in (-1, 1):  # 소리 파동
                 for i in range(3):
