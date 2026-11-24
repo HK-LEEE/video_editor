@@ -166,7 +166,8 @@ def run_cli(user: str, model: str, timeout: float = CLI_TIMEOUT, runner=None) ->
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}   # 내 로그인으로 돌립니다
     schema_note = ("\n\n반드시 아래 JSON 스키마를 따르는 JSON 객체 하나만 출력하세요(설명·코드블록 없이).\n" + json.dumps(SCHEMA, ensure_ascii=False))
     base = [exe, "-p", "--output-format", "json", "--model", model]
-    rich = base + ["--system-prompt", SYSTEM, "--tools", "", "--no-session-persistence", "--disable-slash-commands"]
+    rich = base + ["--system-prompt", SYSTEM, "--tools", "", "--no-session-persistence", "--disable-slash-commands",
+                            "--strict-mcp-config", "--setting-sources", "project"]
     with tempfile.TemporaryDirectory() as cwd:          # 프로젝트 폴더의 설정·메모를 읽지 않게 빈 폴더에서 돌립니다
         for args in (rich, base):
             try:
