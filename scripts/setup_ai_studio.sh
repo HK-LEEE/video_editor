@@ -12,7 +12,7 @@ fi
 
 # 1) 자동 리프레임: .venv-aitools에 OpenCV (받아쓰기·번역 설치가 아직이면 먼저 그것부터)
 [ -f .venv-aitools/.aitools-ready ] || bash scripts/setup_ai_tools.sh
-.venv-aitools/bin/pip install "opencv-python-headless>=4.9"
+.venv-aitools/bin/pip install "opencv-python-headless>=4.9,<5"
 mkdir -p third_party/yunet
 [ -f third_party/yunet/face_detection_yunet_2023mar.onnx ] || curl -fsSL -o third_party/yunet/face_detection_yunet_2023mar.onnx \
   https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx \

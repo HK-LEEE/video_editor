@@ -266,8 +266,8 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             try:
                 frames = ai_tools.detect_subjects(ws.media_file(b.media), b.start, b.end, b.step)
             except RuntimeError as e:
-                if "cv2" in str(e) or "opencv" in str(e).lower():
-                    raise RuntimeError(f"자동 리프레임에는 OpenCV가 필요해요. 터미널에서 `{separate.SETUP_CMD}`를 실행하세요.") from None
+                if "No module named" in str(e) and "cv2" in str(e):
+                    raise RuntimeError(f"자동 리프레임에는 OpenCV가 필요해요. 터미널에서 `{separate.SETUP_CMD}`를 실행하세요. (원문: {str(e)[-200:]})") from None
                 raise
             found = sum(1 for f in frames if f.get("boxes"))
             return {"track": reframe.build_track(frames, b.start, b.end, max(b.step, 0.25)) if frames else [],
