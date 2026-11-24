@@ -1357,6 +1357,16 @@ function removeTrack(id) {
   });
 }
 
+// 겹치지 않는 가장 낮은 줄(lane)을 새 자막에 배정해요. 기존 자막은 그대로 둬요.
+function assignLanes(cues, existing = project.subtitles) {
+  const placed = [...existing];
+  for (const c of [...cues].sort((a, b) => a.start - b.start)) {
+    let lane = 0;
+    while (lane < 9 && placed.some((q) => (q.lane || 0) === lane && q.start < c.end && c.start < q.end)) lane++;
+    c.lane = lane; placed.push(c);
+  }
+  return cues;
+}
 // ---- 자막 트랙
 function addCue(t = playhead(), text = '새 자막', want = null) {
   t = Math.max(0, t);
@@ -1416,6 +1426,7 @@ async function importSubFile(file) {
     const off = val('srtAt') === 'ph' ? ph : 0, lang = $('srtLang').value.trim().toLowerCase();
     const cues = d.cues.map((c) => ({ id: uid(), start: +(c.start + off).toFixed(3), end: +(c.end + off).toFixed(3), text: c.text, lang, source: 'manual', words: [] }));
     const mode = val('srtMode');
+    if (mode === 'add') assignLanes(cues);
     if (mode === 'lane') { const nl = Math.min(9, Math.max(0, ...project.subtitles.map((q) => (q.lane || 0) + 1))); cues.forEach((c) => (c.lane = nl)); }
     edit(() => { project.subtitles = mode === 'replace' ? cues : [...project.subtitles, ...cues]; sel.cue = null; sel.subs = true; sel.clip = null; sel.track = null; sel.ov = null; });
     dlg.close(); seek(cues[0].start);
@@ -3148,9 +3159,8 @@ async function aiSubs(say) {
     cues.push({ id: uid(), start: t0, end: mediaToTl(c, e0), text: q.text, lang: res.lang, source: 'ai', words, emotion: '' });
   }
   if (!cues.length) return '말소리를 찾지 못했어요.';
-  const a = c.start, b = end(c);
   edit(() => {
-    project.subtitles = project.subtitles.filter((x) => !(x.source === 'ai' && x.lang === res.lang && x.end > a && x.start < b));
+    assignLanes(cues);
     project.subtitles.push(...cues);
   });
   return `✅ 자막 ${cues.length}개를 만들었어요 (${AI_LANGS[res.lang] || res.lang}). 자막 트랙에서 고칠 수 있어요.`;

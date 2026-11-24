@@ -103,6 +103,15 @@ def test_cut_everything_is_refused_and_short_passthrough():
     assert ops[0]["end"] == 20 and chat_edit.apply_ops(proj(), ops).short == {"start": 4.0, "end": 20.0, "format": "shorts"}
 
 
+def test_add_cue_overlapping_goes_to_new_lane():
+    p = chat_edit.apply_ops(proj(), [{"op": "add_cue", "start": 1.0, "end": 3.0, "text": "겹침"},
+                                     {"op": "add_cue", "start": 2.0, "end": 3.5, "text": "또 겹침"},
+                                     {"op": "add_cue", "start": 15.0, "end": 16.0, "text": "안 겹침"}]).project
+    lanes = {c.text: c.lane for c in p.subtitles}
+    assert lanes["겹침"] == 1 and lanes["또 겹침"] == 2 and lanes["안 겹침"] == 0
+    assert all(c.lane == 0 for c in p.subtitles if c.id in ("s1", "s2", "s3"))
+
+
 def test_plan_edit_runs_headless_cli_with_project_context(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak-0000")
     monkeypatch.setattr(claude_copy, "cli_path", lambda: "/usr/bin/claude")
