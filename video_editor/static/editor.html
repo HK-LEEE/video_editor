@@ -3350,8 +3350,7 @@ $('jApply').onclick = () => jGuard(async () => {
   });
   loadPeaksFor(); seek(start); fillJoinBin();
   jSay(`✅ 타임라인에 이어 붙였어요 (${res.plan.clips.length}개 영상, 이음새 ${res.plan.seams.length}곳, 총 ${res.plan.total.toFixed(1)}초). ⌘Z로 되돌릴 수 있어요.`, false, 'jMsg2');
-  const ids = new Set(res.plan.clips.map((p) => p.media));
-  J.fromClips = res.clips.filter((c) => c.track === vt.id && ids.has(c.media)).map((c) => c.id);   // 다시 분석·적용하면 이번에 놓은 클립을 대신해요
+  J.fromClips = res.clips.filter((c) => c.track === vt.id).map((c) => c.id);   // 다시 분석·적용하면 이번에 놓은 클립(이음 모핑 다리 포함)을 대신해요
 }, 'jMsg2');
 
 window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; },
