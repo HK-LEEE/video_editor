@@ -393,3 +393,8 @@ def test_character_render_and_tts_through_character(api, monkeypatch):
     assert c.post("/api/ai/tts", json={"text": "a", "character": "abc123"}).status_code == 404
     r = run(c, "/api/ai/dub", {"cues": [{"start": 0, "end": 2, "text": "hello there"}], "lang": "en", "character": ch["id"], "emotion": "sad"})
     assert r["status"] == "done" and "로봇" in r["result"]["media"]["name"]
+
+
+def test_detect_catches_conjugated_endings():
+    for text, emo in [("기쁜 날입니다", "happy"), ("너무 슬픈 하루였습니다", "sad"), ("화가 났습니다", "angry"), ("즐거웠어요", "happy")]:
+        assert emotion.detect(text, "ko")[0] == emo
