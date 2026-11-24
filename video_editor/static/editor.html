@@ -701,6 +701,7 @@ function doRedo() { if (!redo.length) return; undo.push(snap()); restore(redo.po
 function afterChange() {
   normalize(project); save(); renderHeads(); renderInspector(); layout(); refreshMix();
   if (aiTxt && $('aiDlg').classList.contains('on')) renderTxt();
+  window.dispatchEvent(new Event('editor:change'));
   $('undoBtn').disabled = !undo.length; $('redoBtn').disabled = !redo.length;
 }
 

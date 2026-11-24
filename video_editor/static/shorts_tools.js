@@ -67,6 +67,8 @@ root.innerHTML = `<div class="tsub">${TABS.map(([k, v]) => `<button data-t="${k}
 root.querySelectorAll('.tsub button').forEach((b) => (b.onclick = () => go(b.dataset.t)));
 function go(t) { cur = t; root.querySelectorAll('.tsub button').forEach((b) => b.classList.toggle('lit', b.dataset.t === t)); PAGES[t](); }
 window.__tools = { show: () => go(cur), go };
+// 타임라인에서 지우거나 되돌려도 '글자' 탭 목록이 바로 맞춰지도록
+window.addEventListener('editor:change', () => { if (cur === 'text' && root.isConnected && body()) pageText(); });
 const body = () => $('#tBody');
 const clipName = (c) => (ed.media[c.media] || {}).name || c.media;
 
