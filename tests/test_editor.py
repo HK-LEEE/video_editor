@@ -479,3 +479,11 @@ def test_color_does_not_change_audio_mix_cache(api):
     fast = base.model_copy(deep=True); fast.clips[0].speed = 2
     assert project_key(base) == project_key(colored)
     assert project_key(base) != project_key(fast)
+
+
+def test_subtitle_parse_endpoint(api):
+    c, tmp = api
+    srt = "1\n00:00:01,000 --> 00:00:02,000\n안녕\n\n2\n00:00:03,000 --> 00:00:04,000\n반가워\n"
+    r = c.post("/api/subtitles/parse?name=a.srt", content=srt.encode("cp949"))
+    assert r.status_code == 200 and r.json()["encoding"] == "cp949" and len(r.json()["cues"]) == 2
+    assert c.post("/api/subtitles/parse?name=a.srt", content=b"nothing").status_code == 400

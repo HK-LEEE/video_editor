@@ -27,7 +27,7 @@ from typing import Literal
 import numpy as np
 import pedalboard as pb
 import soundfile as sf
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -872,6 +872,15 @@ def make_router(ws: Workspace) -> APIRouter:
     def subtitles_srt(p: Project):
         return Response(to_srt(p.subtitles, p.subtitle_lang), media_type="application/x-subrip; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="subtitles.srt"'})
+
+    @router.post("/subtitles/parse")
+    async def subtitles_parse(request: Request, name: str = ""):
+        """자막 파일(SRT·VTT·ASS)의 바이트를 그대로 받아 구간 목록으로 돌려줘요 (넣는 건 화면이 해요)."""
+        from .subtitle_import import SubtitleParseError, parse_subtitles
+        try:
+            return parse_subtitles(await request.body(), name)
+        except SubtitleParseError as e:
+            raise HTTPException(400, str(e))
 
     @router.get("/exports/{name}")
     def get_export(name: str, project: str = ""):
