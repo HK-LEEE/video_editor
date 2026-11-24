@@ -80,7 +80,7 @@ def test_segments_to_cues_splits_long_lines():
     assert len(cues) > 2 and all(len(c["text"]) <= 20 for c in cues)
     assert cues[0]["start"] == 0 and cues[-1]["end"] == pytest.approx(5.9) and cues[0]["lang"] == "ko"
     plain = ai_tools.segments_to_cues([{"start": 1, "end": 2, "text": " 안녕 ", "words": []}], "ko")
-    assert plain == [{"start": 1, "end": 2, "text": "안녕", "lang": "ko"}]
+    assert plain == [{"start": 1, "end": 2, "text": "안녕", "lang": "ko", "words": []}]
 
 
 def test_scene_changes(tmp_path):
@@ -191,6 +191,7 @@ def test_tts_and_translate_and_dub(api, monkeypatch):
 
     cues = [{"start": 0.0, "end": 1.0, "text": "hello there"}, {"start": 2.0, "end": 2.4, "text": "a very long sentence here ok"}]
     r = run(c, "/api/ai/dub", {"cues": cues, "lang": "en"})
+    assert r["status"] == "done", r
     m = r["result"]["media"]
     assert r["status"] == "done" and m["duration"] == pytest.approx(2.9, abs=0.1)
     x, _ = sf.read(tmp / "ws" / "media" / m["file"], dtype="float32")

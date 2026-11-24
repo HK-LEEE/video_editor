@@ -23,6 +23,12 @@ FORMATS: dict[str, dict] = {
 }
 
 
+class TrackPoint(BaseModel):
+    t: float = Field(ge=0)                        # 타임라인 시각 (초)
+    cx: float = Field(0.5, ge=0.0, le=1.0)
+    cy: float = Field(0.5, ge=0.0, le=1.0)
+
+
 class ShortSpec(BaseModel):
     format: Literal["shorts", "reels"] = "shorts"
     start: float = Field(0.0, ge=0)               # 타임라인에서 자를 구간 (초)
@@ -32,6 +38,7 @@ class ShortSpec(BaseModel):
     cy: float = Field(0.5, ge=0.0, le=1.0)
     fit: bool = False                             # 켜면 자르지 않고 전체를 폭에 맞춰 넣고 위아래는 흐린 배경으로 채움
     safe_subs: bool = True                        # 자막을 안전 영역 안으로 옮김
+    track: list[TrackPoint] = Field(default_factory=list, max_length=400)   # 자동 리프레임: 시각마다 구도 중심 (있으면 cx·cy 대신 따라갑니다)
 
 
 def window(W: int, H: int, spec: ShortSpec) -> tuple[int, int, int, int]:
@@ -73,8 +80,27 @@ def shift_cues(cues: list[Cue], start: float, end: float) -> list[Cue]:
     for c in cues:
         if c.end <= start or c.start >= end:
             continue
-        out.append(c.model_copy(update={"start": max(c.start, start) - start, "end": min(c.end, end) - start}))
+        lost = max(0.0, start - c.start)              # 앞이 잘렸으면 낱말 시각도 그만큼 당깁니다
+        words = [w.model_copy(update={"s": max(0.0, w.s - lost), "e": max(0.0, w.e - lost)}) for w in c.words if w.e > lost]
+        out.append(c.model_copy(update={"start": max(c.start, start) - start, "end": min(c.end, end) - start, "words": words}))
     return out
+
+
+def _lerp_expr(keys: list[tuple[float, float]]) -> str:
+    """키 (시각, 값) 사이를 직선으로 잇는 ffmpeg 식 (바깥은 첫·끝 값 그대로). 변수는 t(초)."""
+    keys = sorted(keys)
+    expr = f"{keys[-1][1]:.5f}"
+    for (t0, v0), (t1, v1) in reversed(list(zip(keys, keys[1:]))):
+        if t1 - t0 < 1e-6:
+            continue
+        expr = f"if(lt(t,{t1:.4f}),{v0:.5f}+({v1 - v0:.5f})*(t-{t0:.4f})/{t1 - t0:.4f},{expr})"
+    return f"if(lt(t,{keys[0][0]:.4f}),{keys[0][1]:.5f},{expr})"
+
+
+def track_keys(spec: ShortSpec, start: float) -> list[tuple[float, float, float]]:
+    """리프레임 점을 자른 영상 기준 시각(0부터)으로. 점이 둘 미만이면 빈 목록."""
+    pts = sorted(spec.track, key=lambda p: p.t)
+    return [(p.t - start, p.cx, p.cy) for p in pts] if len(pts) >= 2 else []
 
 
 def video_filter(W: int, H: int, spec: ShortSpec, start: float, end: float) -> str:
@@ -86,4 +112,11 @@ def video_filter(W: int, H: int, spec: ShortSpec, start: float, end: float) -> s
                 f"[sb]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease,setsar=1[sfg];"
                 f"[sbg][sfg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[vshort]")
     x, y, w, h = window(W, H, spec)
+    keys = track_keys(spec, start)
+    if keys:   # 자동 리프레임: 시간에 따라 크롭 위치가 움직입니다 (식 안의 쉼표는 따옴표로 감쌉니다)
+        cx = _lerp_expr([(t, a) for t, a, _ in keys])
+        cy = _lerp_expr([(t, b) for t, _, b in keys])
+        xe = f"max(0,min({W - w},({cx})*{W}-{w / 2:.2f}))"
+        ye = f"max(0,min({H - h},({cy})*{H}-{h / 2:.2f}))"
+        return (f"{head},crop={w}:{h}:x='{xe}':y='{ye}',scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1,format=yuv420p[vshort]")
     return f"{head},crop={w}:{h}:{x}:{y},scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1,format=yuv420p[vshort]"

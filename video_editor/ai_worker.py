@@ -56,6 +56,52 @@ def translate(a):
     return {"texts": [tr.translate(t, src, dst) if t.strip() else "" for t in a["texts"]]}
 
 
+def track(a):
+    """자동 리프레임용: start~end(초)를 step초마다 보면서 얼굴(없으면 사람 몸)을 찾아 화면 비율 좌표로 돌려줍니다."""
+    import cv2
+
+    cap = cv2.VideoCapture(a["video"])
+    if not cap.isOpened():
+        raise RuntimeError("영상을 열 수 없습니다.")
+    W, H = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    scale = min(1.0, 640.0 / max(W, 1))
+    sw, sh = max(2, int(W * scale)), max(2, int(H * scale))
+    yunet = a.get("yunet")
+    det = None
+    if yunet and os.path.exists(yunet):
+        det = cv2.FaceDetectorYN.create(yunet, "", (sw, sh), 0.7)
+    cascades = [cv2.CascadeClassifier(cv2.data.haarcascades + n)
+                for n in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml")]
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    frames, t, step = [], float(a["start"]), float(a.get("step", 0.5))
+    while t <= float(a["end"]) + 1e-6:
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        ok, img = cap.read()
+        if not ok:
+            break
+        img = cv2.resize(img, (sw, sh))
+        boxes = []                                   # [cx, cy, size] 모두 화면 비율
+        if det is not None:
+            det.setInputSize((sw, sh))
+            _, faces = det.detect(img)
+            for f in (faces if faces is not None else []):
+                boxes.append([(f[0] + f[2] / 2) / sw, (f[1] + f[3] / 2) / sh, f[3] / sh])
+        else:
+            gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+            for c in cascades:
+                for (x, y, w, h) in c.detectMultiScale(gray, 1.15, 5, minSize=(max(24, sw // 24),) * 2):
+                    boxes.append([(x + w / 2) / sw, (y + h / 2) / sh, h / sh])
+        if not boxes:                                # 얼굴이 없으면 사람 몸 (윗부분이 구도의 중심)
+            rects, _ = hog.detectMultiScale(img, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            for (x, y, w, h) in rects:
+                boxes.append([(x + w / 2) / sw, (y + h * 0.3) / sh, h / sh * 0.5])
+        frames.append({"t": round(t, 3), "boxes": [[round(float(v), 4) for v in b] for b in boxes]})
+        t += step
+    cap.release()
+    return {"frames": frames, "width": W, "height": H}
+
+
 def prepare(a):
     """설치할 때 모델을 미리 내려받습니다."""
     from faster_whisper import WhisperModel
@@ -69,7 +115,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     req = json.loads(sys.stdin.read() or "{}")
     try:
-        res = {"transcribe": transcribe, "translate": translate, "prepare": prepare}[cmd](req)
+        res = {"transcribe": transcribe, "translate": translate, "prepare": prepare, "track": track}[cmd](req)
         print("\n" + json.dumps({"ok": True, **res}, ensure_ascii=False))
     except Exception as e:  # noqa: BLE001
         print("\n" + json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False))

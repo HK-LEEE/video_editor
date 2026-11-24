@@ -7,3 +7,4 @@ workspace/
 .venv-seedvc/
 third_party/
 .venv-aitools/
+.venv-demucs/

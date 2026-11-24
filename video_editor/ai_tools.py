@@ -85,6 +85,16 @@ def transcribe(wav: Path, lang: str = "", verbatim: bool = False) -> dict:
     return run_worker("transcribe", payload)
 
 
+def yunet_model() -> Path:
+    return Path(os.environ.get("YUNET_MODEL") or ROOT / "third_party" / "yunet" / "face_detection_yunet_2023mar.onnx")
+
+
+def detect_subjects(video: Path, start: float, end: float, step: float = 0.5) -> list[dict]:
+    """영상의 start~end(초)에서 step초마다 사람 얼굴·몸 위치 [{t, boxes:[[cx,cy,size]]}] (화면 비율)."""
+    res = run_worker("track", {"video": str(video), "start": start, "end": end, "step": step, "yunet": str(yunet_model())})
+    return res["frames"]
+
+
 def translate(texts: list[str], src: str, dst: str) -> list[str]:
     return run_worker("translate", {"texts": texts, "src": src, "dst": dst})["texts"]
 
@@ -92,20 +102,24 @@ def translate(texts: list[str], src: str, dst: str) -> list[str]:
 # ---------------------------------------------------------------- 자막 만들기
 
 def segments_to_cues(segments: list[dict], lang: str, max_chars: int = 28, max_dur: float = 6.0) -> list[dict]:
-    """받아쓰기 구간을 읽기 편한 길이로 쪼갭니다(단어 시각 기준). 반환 시각은 미디어 기준 초."""
+    """받아쓰기 구간을 읽기 편한 길이로 쪼갭니다(단어 시각 기준). 반환 시각은 미디어 기준 초.
+    낱말이 있으면 cue["words"]에 자막 시작 기준(상대) 시각으로 같이 담아 낱말별 강조 자막에 씁니다."""
     cues = []
     for s in segments:
         words = s.get("words") or []
         if not words:
             if s["text"].strip():
-                cues.append({"start": s["start"], "end": s["end"], "text": s["text"].strip(), "lang": lang})
+                cues.append({"start": s["start"], "end": s["end"], "text": s["text"].strip(), "lang": lang, "words": []})
             continue
         cur: list[dict] = []
 
         def flush():
             if cur:
-                cues.append({"start": cur[0]["s"], "end": cur[-1]["e"], "lang": lang,
-                             "text": " ".join(w["w"] for w in cur).strip()})
+                t0 = cur[0]["s"]
+                cues.append({"start": t0, "end": cur[-1]["e"], "lang": lang,
+                             "text": " ".join(w["w"] for w in cur).strip(),
+                             "words": [{"s": round(w["s"] - t0, 3), "e": round(max(w["e"], w["s"]) - t0, 3), "w": w["w"]}
+                                       for w in cur]})
                 cur.clear()
 
         for w in words:
@@ -116,6 +130,18 @@ def segments_to_cues(segments: list[dict], lang: str, max_chars: int = 28, max_d
                 flush()
         flush()
     return [c for c in cues if c["text"] and c["end"] > c["start"]]
+
+
+def segment_words(segments: list[dict]) -> list[list[dict]]:
+    """글로 편집용: 받아쓰기 구간마다 낱말 목록 [{s,e,w}] (미디어 기준 초)."""
+    out = []
+    for s in segments:
+        words = [{"s": w["s"], "e": w["e"], "w": w["w"]} for w in s.get("words") or [] if w["w"].strip()]
+        if words:
+            out.append(words)
+        elif s["text"].strip():
+            out.append([{"s": s["start"], "e": s["end"], "w": s["text"].strip()}])
+    return out
 
 
 # ---------------------------------------------------------------- 무음·군말

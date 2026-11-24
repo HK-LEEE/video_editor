@@ -31,7 +31,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from . import ai_voice, shorts
+from . import ai_voice, characters, shorts
 from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
@@ -159,10 +159,45 @@ def convert_ai(ws: Workspace, mid: str, ref: str) -> None:
     save_wav(ai_cache(ws, mid, ref), peak_limit(y, SR))
 
 
+def voice_ref(ws: Workspace, voice: str) -> str | None:
+    """이 목소리가 AI 변환(샘플 목소리)을 필요로 하면 그 샘플 미디어 id, 아니면 None."""
+    if ai_voice.is_ai_voice(voice):
+        return ai_voice.ref_id(voice)
+    if characters.is_char(voice):
+        ch = characters.get(ws.root, characters.char_id(voice))
+        return ch.ref or None if ch else None
+    return None
+
+
+def character_audio(ws: Workspace, mid: str, ch: characters.Character, *, convert: bool = False) -> np.ndarray | None:
+    """미디어 소리에 캐릭터 목소리를 입힌 결과 (캐시). AI 변환이 아직이면 convert=True일 때만 (오래 걸리게) 만들고,
+    아니면 None을 돌려줍니다. 시간축은 원본과 같습니다."""
+    if ch.ref:
+        cache = ai_cache(ws, mid, ch.ref)
+        if not cache.exists():
+            if not convert:
+                return None
+            convert_ai(ws, mid, ch.ref)
+        a, _ = sf.read(cache, dtype="float32")
+    else:
+        a = media_audio(ws, mid)
+    if ch.preset == ORIGINAL or not a.size:
+        return a
+    cache2 = ws.root / "cache" / f"{mid}_char_{ch.id}_{ch.signature()}.wav"
+    if not cache2.exists():
+        save_wav(cache2, process(a, voice_for(ch.preset), trim=False, intensity=ch.intensity))
+    a, _ = sf.read(cache2, dtype="float32")
+    return a
+
+
 def clip_audio(ws: Workspace, mid: str, voice: str = ORIGINAL, intensity: float = 1.0) -> np.ndarray:
     """미디어 소리에 목소리 변조를 적용한 결과 (캐시). 시간축은 원본과 같습니다."""
     if voice == ORIGINAL:
         return media_audio(ws, mid)
+    if characters.is_char(voice):
+        ch = characters.get(ws.root, characters.char_id(voice))
+        out = character_audio(ws, mid, ch) if ch else None
+        return media_audio(ws, mid) if out is None else out   # 캐릭터가 없어졌거나 AI 변환 전이면 원본 소리
     if ai_voice.is_ai_voice(voice):
         cache = ai_cache(ws, mid, ai_voice.ref_id(voice))
         if not cache.exists():  # 아직 변환 전이면 원본 소리 (내보내기는 막습니다)
@@ -177,6 +212,15 @@ def clip_audio(ws: Workspace, mid: str, voice: str = ORIGINAL, intensity: float 
         save_wav(cache, y)
     a, _ = sf.read(cache, dtype="float32")
     return a
+
+
+def remove_media(ws: Workspace, mid: str) -> None:
+    """작업 중간에 만든 임시 미디어를 보관함에서 지웁니다."""
+    meta = ws.meta(mid)
+    (ws.root / "media" / meta["file"]).unlink(missing_ok=True)
+    ws.meta_path(mid).unlink(missing_ok=True)
+    for f in (ws.root / "cache").glob(f"{mid}_*"):
+        f.unlink(missing_ok=True)
 
 
 def peaks(audio: np.ndarray) -> list[float]:
@@ -391,9 +435,14 @@ def project_key(p: Project, ws: Workspace | None = None) -> str:
     """소리 믹스의 캐시 키. 소리에 영향 없는 자막·전환·PiP 설정은 빼서, 그걸 바꿔도 믹스를 다시 만들지 않습니다."""
     raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_lang": True,
                                      "clips": {"__all__": VIDEO_ONLY_CLIP_FIELDS}})
-    if ws is not None:  # AI 변환이 끝나면 같은 프로젝트라도 소리가 달라집니다
-        raw += "".join("1" if ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists() else "0"
-                       for c in p.clips if ai_voice.is_ai_voice(c.voice))
+    if ws is not None:  # AI 변환이 끝나거나 캐릭터를 고치면 같은 프로젝트라도 소리가 달라집니다
+        for c in p.clips:
+            ref = voice_ref(ws, c.voice)
+            if ref:
+                raw += "1" if ai_cache(ws, c.media, ref).exists() else "0"
+            if characters.is_char(c.voice):
+                ch = characters.get(ws.root, characters.char_id(c.voice))
+                raw += ch.signature() if ch else "-"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
@@ -562,8 +611,7 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
             t0, t1 = shorts.span(short, length)
         except ValueError as e:
             raise HTTPException(400, str(e))
-    pending = [c for c in p.clips if ai_voice.is_ai_voice(c.voice)
-               and not ai_cache(ws, c.media, ai_voice.ref_id(c.voice)).exists()]
+    pending = [c for c in p.clips if voice_ref(ws, c.voice) and not ai_cache(ws, c.media, voice_ref(ws, c.voice)).exists()]
     if pending:
         raise HTTPException(409, f"AI 변환이 아직 안 된 클립이 {len(pending)}개 있어요. 속성 패널에서 'AI 변환 만들기'를 먼저 눌러 주세요.")
     wav = mix_file(ws, p)
@@ -624,7 +672,9 @@ def make_router(ws: Workspace) -> APIRouter:
     @router.get("/voices")
     def voices():
         return [{"name": ORIGINAL, "label": "원본 (변조 없음)"}] + \
-               [{"name": n, "label": s.label} for n, s in load_presets().items()]
+               [{"name": n, "label": s.label} for n, s in load_presets().items()] + \
+               [{"name": characters.PREFIX + c.id, "label": "🎭 " + c.name, "character": True, "ref": c.ref}
+                for c in characters.load(ws.root)]
 
     # ---- AI 음성 변환 (Seed-VC)
     jobs = ai_voice.JobRunner()
