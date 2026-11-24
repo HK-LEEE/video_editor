@@ -448,7 +448,7 @@ async function saveProj() {
   catch (e) { say('mMsg', e.message, true); }
 }
 function results(el, rs) {
-  el.innerHTML = rs.map((r) => `<div class="lib" style="cursor:default"><span class="n">${r.ok ? '✅' : '⚠'} ${esc(r.name)}<small>${r.ok ? (r.url ? `<a href="${r.url}" style="color:var(--accent)">내려받기</a>` : '완료') : esc(r.error || '')}</small></span></div>`).join('');
+  el.innerHTML = rs.map((r) => `<div class="lib" style="cursor:default"><span class="n">${r.ok ? '✅' : '⚠'} ${esc(r.name)}<small>${r.ok ? (r.url ? `<a href="${r.url}" style="color:var(--accent)">내려받기</a>` : '완료') + (r.path ? ` · <button data-reveal="${esc(r.path)}">Finder에서 열기</button><br><code style="word-break:break-all">${esc(r.path)}</code>` : '') : esc(r.error || '')}</small></span></div>`).join('');
 }
 async function batchApply() {
   if (!T.tplSel) return say('mMsg', '위 목록에서 입힐 템플릿을 먼저 골라 주세요 (동그라미).', true);

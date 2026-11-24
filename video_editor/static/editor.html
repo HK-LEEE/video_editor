@@ -46,6 +46,7 @@
   .brand { display: flex; align-items: center; gap: 7px; margin-right: 6px; font-size: 14px; }
   .brand .ic { width: 20px; height: 20px; color: var(--accent); }
   .brand small { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  #toolrow { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid var(--line); }
   #appbar .sep { width: 1px; height: 22px; background: var(--line2); margin: 0 4px; }
   #appbar a { color: var(--muted); text-decoration: none; margin-left: 6px; white-space: nowrap; } #appbar a:hover { color: var(--ink); }
   #appbar button { padding: 5px 9px; }
@@ -216,6 +217,10 @@
   .check { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
   #result a { color: var(--accent); }
   #result video { width: 100%; margin-top: 6px; border-radius: 6px; }
+  #result .exinfo { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; font-size: 11px; color: var(--muted); }
+  #result .exinfo code { word-break: break-all; user-select: all; }
+  #result .exrow { display: flex; gap: 6px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
+  #result .exrow .nm { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- 타임라인 ---- */
   #tlBar { display: flex; gap: 10px; align-items: center; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); flex-wrap: wrap; min-height: 34px; }
@@ -387,23 +392,26 @@
   <button id="undoBtn" class="ib" title="⌘Z"><svg class="ic"><use href="#i-undo"/></svg></button>
   <button id="redoBtn" class="ib" title="⌘⇧Z"><svg class="ic"><use href="#i-redo"/></svg></button>
   <span class="sep"></span>
-  <button id="recBtn" title="R: 선택한 보이스 트랙에 녹음"><svg class="ic" style="color:var(--rec)"><use href="#i-rec"/></svg><span class="lb">녹음</span></button>
-  <button id="splitBtn" title="S"><svg class="ic"><use href="#i-cut"/></svg><span class="lb">자르기</span></button>
-  <button id="delBtn" title="Delete"><svg class="ic"><use href="#i-trash"/></svg><span class="lb">지우기</span></button>
-  <span class="sep"></span>
-  <button id="addV"><svg class="ic"><use href="#i-film"/></svg><span class="lb">+ 영상</span></button>
-  <button id="addA"><svg class="ic"><use href="#i-wave"/></svg><span class="lb">+ 오디오</span></button>
-  <button id="addSub" title="T: 재생 위치에 자막 넣기"><svg class="ic"><use href="#i-caption"/></svg><span class="lb">+ 자막</span></button>
-  <span class="sep"></span>
-  <button id="shortBtn" title="유튜브 쇼츠·인스타 릴스 화면으로 미리보기, 자르기, 따로 내보내기"><svg class="ic"><use href="#i-phone"/></svg><span class="lb">쇼츠/릴스</span></button>
-  <button id="joinBtn" title="여러 영상을 순서대로 이어 붙이면서 앞뒤 불량 프레임 정리, 색·소리 맞춤, 가장 자연스러운 전환을 자동으로"><svg class="ic"><use href="#i-film"/></svg><span class="lb">자동 이어붙이기</span></button>
-  <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">AI 도구</span></button>
-  <button id="chatBtn" title="한국어로 말하듯 편집 지시 (앞 3초 잘라, '음' 다 지워, BGM 줄여…) — Claude가 할 일을 먼저 보여주고 확인하면 적용해요"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">글로 편집 채팅</span></button>
   <span id="status"></span>
   <span id="saveSt" title="편집 내용은 이 브라우저와 서버의 프로젝트 파일에 자동으로 저장돼요 (⌘S: 지금 바로 저장)"></span>
   <button id="keysBtn" class="ib" title="단축키 (?)"><svg class="ic"><use href="#i-kbd"/></svg></button>
   <button id="exportBtn" class="primary"><svg class="ic"><use href="#i-down"/></svg>내보내기 (mp4)</button>
   <a href="/">간단 변조기 →</a>
+  <div id="toolrow">
+    <button id="recBtn" title="R: 선택한 보이스 트랙에 녹음"><svg class="ic" style="color:var(--rec)"><use href="#i-rec"/></svg><span class="lb">녹음</span></button>
+    <button id="splitBtn" title="S"><svg class="ic"><use href="#i-cut"/></svg><span class="lb">자르기</span></button>
+    <button id="delBtn" title="Delete"><svg class="ic"><use href="#i-trash"/></svg><span class="lb">지우기</span></button>
+    <span class="sep"></span>
+    <button id="addV"><svg class="ic"><use href="#i-film"/></svg><span class="lb">+ 영상</span></button>
+    <button id="addA"><svg class="ic"><use href="#i-wave"/></svg><span class="lb">+ 오디오</span></button>
+    <button id="addSub" title="T: 재생 위치에 자막 넣기"><svg class="ic"><use href="#i-caption"/></svg><span class="lb">+ 자막</span></button>
+    <span class="sep"></span>
+    <button id="shortBtn" title="유튜브 쇼츠·인스타 릴스 화면으로 미리보기, 자르기, 따로 내보내기"><svg class="ic"><use href="#i-phone"/></svg><span class="lb">쇼츠/릴스</span></button>
+    <span class="sep"></span>
+    <button id="joinBtn" title="여러 영상을 순서대로 이어 붙이면서 앞뒤 불량 프레임 정리, 색·소리 맞춤, 가장 자연스러운 전환을 자동으로"><svg class="ic"><use href="#i-film"/></svg><span class="lb">자동 이어붙이기</span></button>
+    <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">AI 도구</span></button>
+    <button id="chatBtn" title="한국어로 말하듯 편집 지시 (앞 3초 잘라, '음' 다 지워, BGM 줄여…) — Claude가 할 일을 먼저 보여주고 확인하면 적용해요"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">글로 편집 채팅</span></button>
+  </div>
 </header>
 
 <div id="top">
@@ -728,6 +736,7 @@ async function saveNow() {   // ⌘S
 // 창을 닫거나 다른 곳으로 가기 직전에 아직 못 보낸 편집분을 바로 보내요
 const flushOnLeave = () => { if (srvTimer) pushServer(true); };
 setSaveSt('자동 저장 켜짐');
+setTimeout(() => { try { renderResult(); } catch {} }, 900);   // 최근 내보내기 목록
 window.addEventListener('pagehide', flushOnLeave);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushOnLeave(); });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); } }, true);
@@ -1398,6 +1407,10 @@ async function exportSrt() {
   if (!r.ok) { status('SRT 내보내기 실패', true); return; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'subtitles.srt'; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000); status('SRT 파일을 저장했어요.');
+  try {   // 프로젝트 폴더(subtitles)에도 한 부 저장하고 경로를 보여 줘요
+    const sv = await fetch('/api/subtitles/srt/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(projectBody()) });
+    if (sv.ok) { const o = await sv.json(); await renderResult(`<h2 style="margin-top:14px">내보낸 자막</h2>${exInfo(o.path, o.file)}`); status('SRT를 내려받았고 프로젝트 폴더에도 저장했어요.'); }
+  } catch {}
 }
 const subTop = () => RULER;   // 자막 트랙은 눈금 바로 아래(맨 위)에 둡니다
 // 화면 글자(훅 제목·워터마크·자유 글자) 트랙: 자막 트랙 바로 아래. 시간이 겹치는 글자는 줄(레인)을 나눠 쌓아요.
@@ -2784,6 +2797,32 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ================================================================ 내보내기
+// ---- 내보낸 파일: 저장 경로 + 'Finder에서 열기' + 최근 내보내기 목록
+const exInfo = (path, label) => `<div class="exinfo">📁 <code>${escapeHtml(path)}</code><button data-reveal="${escapeHtml(path)}" title="Finder에서 이 파일을 보여줘요">Finder에서 열기</button>${label ? '' : ''}</div>`;
+const exSize = (b) => (b >= 1e6 ? (b / 1e6).toFixed(1) + 'MB' : Math.max(1, Math.round(b / 1e3)) + 'KB');
+async function recentHtml() {
+  try {
+    const d = await (await fetch('/api/export/list?project=' + encodeURIComponent(WSI.id))).json();
+    if (!d.items.length) return `<h2 style="margin-top:14px">최근 내보내기</h2><p class="muted">아직 내보낸 영상이 없어요. 저장 폴더: <code>${escapeHtml(d.dir)}</code></p>`;
+    return `<h2 style="margin-top:14px">최근 내보내기 <small class="muted">(이 프로젝트)</small></h2><div class="exinfo">📁 <code>${escapeHtml(d.dir)}</code></div>` + d.items.map((o) =>
+      `<div class="exrow"><span class="nm" title="${escapeHtml(o.file)}">${escapeHtml(o.file)}<small class="muted"> · ${exSize(o.size)} · ${new Date(o.mtime * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</small></span>` +
+      `<button data-reveal="${escapeHtml(o.path)}">Finder에서 열기</button>${o.srt ? `<button data-reveal="${escapeHtml(o.srt)}" title="같은 이름의 자막 파일">SRT</button>` : ''}<a href="${o.url}" download>내려받기</a></div>`).join('');
+  } catch { return ''; }
+}
+async function renderResult(latest = '') {   // 방금 낸 것 + 최근 내보내기 목록
+  const r = $('result'); if (!r) return;
+  r.innerHTML = latest + await recentHtml();
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-reveal]'); if (!b) return;
+  try {
+    const r = await fetch('/api/exports/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: b.dataset.reveal }) });
+    const d = await r.json();
+    if (!r.ok) status(d.detail || '열지 못했어요.', true);
+    else if (!d.opened) status(d.reason || '열지 못했어요.', true);
+    else status('Finder에서 열었어요.');
+  } catch { status('열지 못했어요.', true); }
+});
 $('exportBtn').onclick = async () => {
   if (!project.clips.length) { status('타임라인이 비어 있어요.', true); return; }
   pause(); $('exportBtn').disabled = true; status('내보내는 중… (영상 길이에 따라 시간이 걸려요)');
@@ -2793,7 +2832,7 @@ $('exportBtn').onclick = async () => {
     const out = await r.json();
     status('완성!');
     sel = { clip: null, track: null, cue: null, subs: false }; renderHeads(); renderInspector();
-    $('result').innerHTML = `<h2 style="margin-top:14px">내보낸 영상</h2><a href="${out.url}" download>⬇ ${out.file} 내려받기</a><video controls src="${out.url}"></video>`;
+    await renderResult(`<h2 style="margin-top:14px">내보낸 영상</h2><a href="${out.url}" download>⬇ ${out.file} 내려받기</a>${exInfo(out.path, out.file)}<video controls src="${out.url}"></video>`);
   } catch (err) { status(String(err.message || err), true); }
   finally { $('exportBtn').disabled = false; }
 };
@@ -4237,7 +4276,7 @@ async function exportShorts(fmts) {
       const r = await fetch('/api/export/short', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: projectBody(), spec }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '내보내기 실패');
       done.push({ fm, ...(await r.json()) });
-      if ($('result')) $('result').innerHTML = done.map((o) => `<h2 style="margin-top:14px">${SHORT.formats[o.fm].label} (1080×1920)</h2><a href="${o.url}" download>⬇ ${o.file} 내려받기</a><video controls src="${o.url}"></video>`).join('');
+      await renderResult(done.map((o) => `<h2 style="margin-top:14px">${SHORT.formats[o.fm].label} (1080×1920)</h2><a href="${o.url}" download>⬇ ${o.file} 내려받기</a>${exInfo(o.path, o.file)}<video controls src="${o.url}"></video>`).join(''));
     }
     status('완성!');
   } catch (err) { status(String(err.message || err), true); }

@@ -38,6 +38,10 @@ from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
 
+class RevealReq(BaseModel):
+    path: str
+
+
 TRANSITIONS = ("none", "fade", "dip", "wipeleft", "wiperight", "slideleft", "slideright")
 ORIGINAL = "original"
 VOICE_TARGET_DB = -20.0
@@ -862,7 +866,7 @@ def make_router(ws: Workspace) -> APIRouter:
     @router.post("/export")
     def export(p: Project):
         out = export_video(ws, p)
-        return {"file": out.name, "url": f"/api/exports/{out.name}"}
+        return {"file": out.name, "url": f"/api/exports/{out.name}", "path": str(out.resolve())}
 
     @router.get("/short/formats")
     def short_formats():
@@ -871,12 +875,52 @@ def make_router(ws: Workspace) -> APIRouter:
     @router.post("/export/short")
     def export_short(b: ShortExport):
         out = export_video(ws, b.project, b.spec)
-        return {"file": out.name, "url": f"/api/exports/{out.name}", "format": b.spec.format}
+        return {"file": out.name, "url": f"/api/exports/{out.name}", "format": b.spec.format, "path": str(out.resolve())}
 
     @router.post("/subtitles/srt")
     def subtitles_srt(p: Project):
         return Response(to_srt(p.subtitles, p.subtitle_lang), media_type="application/x-subrip; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="subtitles.srt"'})
+
+    @router.post("/subtitles/srt/save")
+    def subtitles_srt_save(p: Project):
+        """현재 자막을 프로젝트의 subtitles 폴더에도 SRT로 저장하고 경로를 알려 줘요 (화면의 'Finder에서 열기'용)."""
+        import datetime
+        d = ws.root / "subtitles"
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"subtitles_{datetime.datetime.now():%Y%m%d-%H%M%S}.srt"
+        f.write_text(to_srt(p.subtitles, p.subtitle_lang), encoding="utf-8")
+        return {"file": f.name, "path": str(f.resolve())}
+
+    @router.get("/export/list")
+    def export_list(project: str = "", limit: int = 30):
+        """이 프로젝트에서 내보낸 영상 (최근 것부터). 같은 이름의 SRT가 있으면 함께."""
+        w = ws.at(project) if project else ws
+        d = w.root / "exports"
+        out = []
+        for f in sorted(d.glob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True)[: max(1, min(limit, 200))] if d.is_dir() else []:
+            st = f.stat()
+            srt = w.root / "subtitles" / f"{f.stem}.srt"
+            out.append({"file": f.name, "path": str(f.resolve()), "size": st.st_size, "mtime": st.st_mtime,
+                        "url": f"/api/exports/{f.name}" + (f"?project={w.pid}" if project else ""),
+                        "srt": str(srt.resolve()) if srt.exists() else None})
+        return {"dir": str(d.resolve()), "items": out}
+
+    @router.post("/exports/reveal")
+    def exports_reveal(b: RevealReq):
+        """내보낸 파일을 macOS Finder에서 보여줘요 (`open -R`). 작업 폴더 안의 exports·subtitles 파일만 열어요."""
+        import sys
+        try:
+            f = Path(b.path).resolve(strict=True)
+            f.relative_to(ws.home.resolve())
+        except (OSError, ValueError):
+            raise HTTPException(400, "작업 폴더 안의 파일만 열 수 있어요.")
+        if not f.is_file() or f.parent.name not in ("exports", "subtitles"):
+            raise HTTPException(400, "내보낸 영상이나 자막 파일만 열 수 있어요.")
+        if sys.platform != "darwin":
+            return {"opened": False, "path": str(f), "reason": "Finder 열기는 macOS에서만 돼요. 경로를 복사해서 찾아 주세요."}
+        r = subprocess.run(["open", "-R", str(f)], capture_output=True, text=True)
+        return {"opened": r.returncode == 0, "path": str(f), "reason": r.stderr.strip()[:200] if r.returncode else ""}
 
     @router.post("/subtitles/parse")
     async def subtitles_parse(request: Request, name: str = ""):

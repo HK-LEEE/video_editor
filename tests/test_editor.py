@@ -1,3 +1,4 @@
+from pathlib import Path
 import subprocess
 
 import numpy as np
@@ -487,3 +488,20 @@ def test_subtitle_parse_endpoint(api):
     r = c.post("/api/subtitles/parse?name=a.srt", content=srt.encode("cp949"))
     assert r.status_code == 200 and r.json()["encoding"] == "cp949" and len(r.json()["cues"]) == 2
     assert c.post("/api/subtitles/parse?name=a.srt", content=b"nothing").status_code == 400
+
+
+def test_export_list_reveal_and_srt_save(api):
+    c, tmp = api
+    body = {"tracks": tracks(), "clips": [], "subtitles": SUBS}
+    saved = c.post("/api/subtitles/srt/save", json=body).json()
+    assert saved["path"].endswith(".srt") and "/subtitles/" in saved["path"]
+    ex = Path(saved["path"]).parent.parent / "exports"
+    ex.mkdir(exist_ok=True)
+    (ex / "video_editor_abc.mp4").write_bytes(b"x" * 10)
+    d = c.get("/api/export/list").json()
+    assert [i["file"] for i in d["items"]] == ["video_editor_abc.mp4"] and d["dir"].endswith("/exports") and d["items"][0]["srt"] is None
+    # reveal: 작업 폴더 밖·다른 종류 파일은 거절
+    assert c.post("/api/exports/reveal", json={"path": "/etc/passwd"}).status_code == 400
+    assert c.post("/api/exports/reveal", json={"path": str(ex / "nope.mp4")}).status_code == 400
+    r = c.post("/api/exports/reveal", json={"path": d["items"][0]["path"]})
+    assert r.status_code == 200 and "opened" in r.json()

@@ -412,7 +412,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
                     spec = None if b.format == "full" else shorts.ShortSpec(format=b.format)
                     out = export_video(w, p, spec)
                     results.append({"id": pid, "name": d["name"], "ok": True, "workspace": w.pid,
-                                    "url": f"/api/exports/{out.name}?project={w.pid}"})
+                                    "url": f"/api/exports/{out.name}?project={w.pid}", "path": str(out.resolve())})
                 except HTTPException as e:
                     results.append({"id": pid, "name": pid, "ok": False, "error": str(e.detail)})
                 except Exception as e:  # noqa: BLE001
