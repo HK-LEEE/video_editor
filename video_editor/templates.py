@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -53,6 +54,8 @@ class Anim(BaseModel):
     bg1: str = "#1b1030"
     bg2: str = "#3a1c5e"
     duration: float = Field(1.6, ge=0.6, le=8.0)
+    image: str = ""                          # 엔딩에 넣을 이미지 (ending_images 폴더의 파일 이름)
+    text_color: str = "#5b3a29"              # 부드러운 엔딩의 글자 색
 
 
 class Template(BaseModel):
@@ -84,6 +87,8 @@ class EndingPreset(BaseModel):
     bg1: str = "#1b1030"
     bg2: str = "#3a1c5e"
     duration: float = Field(3.0, ge=1.5, le=8.0)
+    image: str = ""                          # 엔딩에 넣을 이미지 (ending_images 폴더의 파일 이름)
+    text_color: str = "#5b3a29"              # 부드러운 엔딩의 글자 색
     scope: str = ""                          # "space" | "global" (템플릿과 같아요)
 
 
@@ -252,11 +257,19 @@ def _place(ws: Workspace, p: Project, mid: str, at: float, tag: str, transition:
 
 def _anim_media(ws: Workspace, params: dict, label: str, W: int, H: int) -> str:
     """애니메이션 카드를 (같은 설정은 한 번만) 만들어 보관함에 숨겨 두고 그 미디어 id를 돌려줍니다."""
+    params = dict(params)
+    img_path = None
+    if params.get("image"):
+        cand = ws.root / "ending_images" / Path(params["image"]).name
+        if cand.exists():
+            img_path = cand
+            params["image_sha"] = hashlib.sha1(cand.read_bytes()).hexdigest()[:12]   # 이미지가 바뀌면 새로 만들어요
+    params.pop("image", None)
     mid = endings_mod.ending_key(params, W, H)
     meta_p = ws.meta_path(mid)
     if not meta_p.exists():
         out = ws.root / "media" / f"{mid}.mp4"
-        endings_mod.render(out, params, W, H)
+        endings_mod.render(out, {**params, **({"image_path": str(img_path)} if img_path else {})}, W, H)
         from .editor import probe
         info = probe(out)
         meta_p.write_text(json.dumps({"id": mid, "name": label, "file": out.name, "recorded": False,
