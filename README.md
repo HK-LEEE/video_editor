@@ -125,16 +125,15 @@ API: `POST /api/autojoin/plan | build | preview` (작업 목록 `GET /api/ai/job
 | 소리 | **효과음 23종 + 배경 음악 9곡** 보관함. 전부 `video_editor/synth.py`가 직접 합성한 소리라 저작권이 없어요 (뿅·띠용·딩동·휙·두둥·합성 웃음·박수…). 검색·분위기/BPM 표시, ▶ 미리듣기, 타임라인으로 끌어놓기 또는 ＋. 배경 음악의 ＋는 영상 길이에 맞춰 반복·페이드아웃하며 넣어요 (말할 때 줄이기는 기존 덕킹). **내 소리 올리기**로 내 파일을 이름·태그·BPM과 함께 보관함에 둘 수 있어요 (음악은 BPM 자동). 처음 한 번 서버가 소리를 만들어 `workspace/media`에 둡니다 |
 | 박자 | 음악 클립의 박자(BPM)를 찾아 타임라인 눈금에 분홍색으로 표시 (`beats.py`, numpy만 사용. ÷2/×2, ms 미세 조정). **클립 경계를 박자에 맞추기**(줄이거나 원본이 남으면 늘려 뒤 클립을 당김, 자막도 따라감, 전환 선택)와 **고른 클립을 N박마다 자르기**(+전환). 전부 ⌘Z |
 | 글자 | 화면 위 글자: **훅 제목**(맨 위 큰 제목 바, 첫 3초), **워터마크**, 자유 글자. 미리보기와 mp4 내보내기에 같이 입혀지고, 쇼츠 모드에서는 앱 UI에 안 가리게 안전 영역으로 옮겨요 |
-| 문구 | **Claude API**로 자막(대본)에서 훅 제목 3안·썸네일 문구와 장면·**유튜브 쇼츠 / 인스타 릴스 업로드 문구**(제목·설명·해시태그)를 뽑고, 고쳐서 복사. 썸네일 PNG도 만들어요. 모델은 Sonnet 5.5(기본)·Opus 5.5 |
+| 문구 | **Claude Code 헤드리스 모드**(기본, 키 불필요) 또는 Claude API로 자막(대본)에서 훅 제목 3안·썸네일 문구와 장면·**유튜브 쇼츠 / 인스타 릴스 업로드 문구**(제목·설명·해시태그)를 뽑고, 고쳐서 복사. 썸네일 PNG도 만들어요. 모델은 Sonnet 5.5(기본)·Opus 5.5 |
 | 템플릿 | 자막 스타일·인트로·아웃트로·워터마크·훅 제목 모양·엔딩을 **템플릿**으로 저장해 지금 프로젝트에 적용하거나, **보관한 프로젝트 여러 개 / 보관함 영상 여러 개에 일괄 적용**하고 **한꺼번에 내보내기**(쇼츠·릴스·원본). 다시 입혀도 겹치지 않고 바뀝니다 |
 | 엔딩 | 구독 버튼 누르기·좋아요 하트 팡·알림 종·시청 감사 4종의 **구독·좋아요 애니메이션**(직접 그린 원본 디자인). 문구·색·길이를 고쳐 프리셋으로 저장하고 영상 끝에 붙이거나 템플릿에 포함 |
 
-### Claude API 키 (문구 탭)
-`pip install -r requirements.txt` 후, 키(https://console.anthropic.com/settings/keys)를 둘 중 한 곳에 두세요. **키는 저장소에 올라가지 않습니다.**
-1. 환경변수: `export ANTHROPIC_API_KEY=sk-ant-...` 하고 `python app.py` 실행
-2. 또는 **쇼츠 도구 → 문구** 탭의 키 칸에 붙여넣기 → `workspace/settings.json`(git 제외, 권한 600)에 저장
+### Claude 연결 (문구 탭)
+- **기본: Claude Code 헤드리스 모드.** 컴퓨터에 설치된 `claude` 명령(`claude -p`)을 내 Claude 로그인으로 불러 써서 **API 키가 필요 없어요.** 터미널에서 `claude`를 한 번 실행해 로그인해 두면 끝입니다. (`claude`가 없으면 `npm install -g @anthropic-ai/claude-code`)
+- **대체: Claude API 키.** 문구 탭에서 방식을 'Claude API 키'로 바꾸고, `export ANTHROPIC_API_KEY=sk-ant-...` 후 `python app.py`를 실행하거나 키 칸에 붙여넣으세요(`workspace/settings.json`, git 제외, 권한 600). `claude`가 없고 키만 있으면 자동으로 API로 갑니다. **키는 저장소에 올라가지 않습니다.**
 
-키가 없으면 문구 탭이 같은 안내를 보여 줘요. 대본 글만 보내며 영상·소리는 보내지 않습니다.
+준비가 안 됐으면 문구 탭이 무엇을 하면 되는지 알려 줘요. 대본 글만 보내며 영상·소리는 보내지 않습니다.
 
 새 API: `GET /api/library`, `POST /api/library/ensure|upload`, `POST /api/beats`, `POST /api/beats/plan`, `GET/PUT /api/settings`, `POST /api/ai/copy`, `POST /api/thumbnail`, `GET/POST/DELETE /api/templates`, `/api/endings`(+`/preview`, `/apply`), `POST /api/template/apply|batch`, `GET/POST/DELETE /api/projects`, `POST /api/batch/export`.
 

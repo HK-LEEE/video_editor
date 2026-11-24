@@ -1,3 +1,4 @@
+import subprocess
 import json
 import time
 from types import SimpleNamespace
@@ -203,6 +204,64 @@ class FakeClient:
         return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(FAKE))])
 
 
+def fake_cli(stdout="", code=0, stderr=""):
+    calls = []
+
+    def run(args, **kw):
+        calls.append((args, kw))
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
+    run.calls = calls
+    return run
+
+
+def test_claude_copy_headless_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak-0000")
+    monkeypatch.setattr(claude_copy, "cli_path", lambda: "/usr/bin/claude")
+    cues = [{"start": 0, "text": "안녕하세요"}]
+    # 구조화 출력 / 코드블록 안의 JSON 모두 읽습니다
+    for out in (json.dumps({"result": "", "structured_output": FAKE}), json.dumps({"result": "```json\n" + json.dumps(FAKE) + "\n```"})):
+        run = fake_cli(out)
+        d = claude_copy.generate(tmp_path, cues, 20, runner=run)
+        args, kw = run.calls[0]
+        assert args[:2] == ["/usr/bin/claude", "-p"] and "claude-sonnet-5-5" in args and "안녕하세요" in kw["input"]
+        assert "ANTHROPIC_API_KEY" not in kw["env"] and d["hook_titles"][0]["text"] == "이거 모르면 손해"
+    # 오래된 CLI는 옵션을 모르면 최소 옵션으로 다시
+    class Old:
+        n = 0
+        def __call__(self, args, **kw):
+            self.n += 1
+            return SimpleNamespace(returncode=1, stdout="", stderr="error: unknown option '--tools'") if "--tools" in args else \
+                SimpleNamespace(returncode=0, stdout=json.dumps({"result": json.dumps(FAKE)}), stderr="")
+    old = Old()
+    claude_copy.generate(tmp_path, cues, runner=old)
+    assert old.n == 2
+    # 로그인 안 됨 / 한도 / 시간 초과 / 이상한 답
+    with pytest.raises(RuntimeError, match="로그인"):
+        claude_copy.generate(tmp_path, cues, runner=fake_cli(json.dumps({"is_error": True, "result": "Not logged in · Please run /login"}), 1))
+    with pytest.raises(RuntimeError, match="한도"):
+        claude_copy.generate(tmp_path, cues, runner=fake_cli("", 1, "Claude usage limit reached"))
+    with pytest.raises(RuntimeError, match="읽지 못"):
+        claude_copy.generate(tmp_path, cues, runner=fake_cli(json.dumps({"result": "음…"})))
+
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired("claude", 1)
+    with pytest.raises(RuntimeError, match="답하지 않았"):
+        claude_copy.generate(tmp_path, cues, runner=slow)
+
+
+def test_claude_copy_cli_missing_and_fallback(tmp_path, monkeypatch, api):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(claude_copy, "cli_path", lambda: None)
+    with pytest.raises(RuntimeError, match="claude"):
+        claude_copy.generate(tmp_path, [{"start": 0, "text": "x"}])
+    c, _, ws = api
+    r = c.post("/api/ai/copy", json={"cues": [{"start": 0, "text": "안녕"}]})
+    assert r.status_code == 503 and "Claude Code" in r.json()["detail"]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-abcdefghijklmnop1234")     # CLI가 없고 키가 있으면 API로
+    assert claude_copy.engine_for(ws.root) == "api" and c.get("/api/settings").json()["ready"]
+    assert c.put("/api/settings", json={"engine": "gpt"}).status_code == 400
+
+
 def test_claude_copy_request_and_cleanup(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     fc = FakeClient()
@@ -225,6 +284,7 @@ def test_settings_never_expose_key(api, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     s = c.get("/api/settings").json()
     assert not s["has_key"] and "ANTHROPIC_API_KEY" in s["no_key_help"]
+    c.put("/api/settings", json={"engine": "api"})
     key = "sk-ant-api03-abcdefghijklmnop1234"
     s = c.put("/api/settings", json={"api_key": key, "model": "claude-opus-5-5"}).json()
     assert s["has_key"] and s["model"] == "claude-opus-5-5" and key not in json.dumps(s)
@@ -234,6 +294,7 @@ def test_settings_never_expose_key(api, monkeypatch):
     # 키가 없으면 분명한 안내
     r = c.post("/api/ai/copy", json={"cues": [{"start": 0, "text": "안녕"}]})
     assert r.status_code == 503 and "API 키" in r.json()["detail"]
+    c.put("/api/settings", json={"engine": "cli"})
     monkeypatch.setenv("ANTHROPIC_API_KEY", key)
     assert c.get("/api/settings").json()["source"] == "env"
 

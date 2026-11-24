@@ -277,11 +277,13 @@ function pageCopy() {
   const s = C.settings;
   body().innerHTML = `
     <p class="muted">자막(대본)을 Claude가 읽고 <b>첫 3초 훅 제목, 썸네일 문구, 유튜브 쇼츠·인스타 릴스 업로드 문구</b>를 뽑아요. 대본 글만 보내고 영상·소리는 보내지 않아요.</p>
-    <div class="card"><b>Claude API 키</b>
+    <div class="card"><b>Claude 연결</b>
+      <div class="row"><span class="muted">방식</span><select id="kEng"></select></div>
       <div id="kStat" class="muted"></div>
-      <div class="row"><input type="password" id="kIn" placeholder="sk-ant-…" autocomplete="off"><button id="kSave">저장</button><button id="kDel" title="저장한 키 지우기">지우기</button></div>
+      <div id="kKeyBox"><div class="row"><input type="password" id="kIn" placeholder="sk-ant-…" autocomplete="off"><button id="kSave">저장</button><button id="kDel" title="저장한 키 지우기">지우기</button></div></div>
       <div class="row"><span class="muted">모델</span><select id="kModel"></select></div>
-      <p class="muted">키는 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:var(--accent)">console.anthropic.com</a>에서 만들어요. ① 터미널에서 <kbd>export ANTHROPIC_API_KEY=sk-ant-…</kbd> 후 앱 실행, 또는 ② 위 칸에 붙여넣기 (이 컴퓨터의 <code>workspace/settings.json</code>에만 저장, 코드에는 안 들어가요).</p></div>
+      <p class="muted" id="kCliHelp">기본은 이 컴퓨터의 <b>Claude Code</b>(<code>claude</code> 명령)를 내 Claude 로그인으로 불러 써요. 키가 필요 없어요. 처음이면 터미널에서 <kbd>claude</kbd> 를 한 번 실행해 로그인하세요.</p>
+      <p class="muted" id="kKeyHelp">키는 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:var(--accent)">console.anthropic.com</a>에서 만들어요. ① 터미널에서 <kbd>export ANTHROPIC_API_KEY=sk-ant-…</kbd> 후 앱 실행, 또는 ② 위 칸에 붙여넣기 (이 컴퓨터의 <code>workspace/settings.json</code>에만 저장, 코드에는 안 들어가요).</p></div>
     <div class="row"><input type="text" id="cTopic" placeholder="채널·영상 주제 (선택, 예: 고양이 일상 브이로그)" value="${esc(C.topic)}"></div>
     <div class="row"><input type="text" id="cNote" placeholder="추가 요청 (선택, 예: 반말로, 웃기게)" value="${esc(C.note)}"></div>
     <div class="row"><button id="cGo" class="primary">대본에서 뽑기</button></div>
@@ -289,6 +291,7 @@ function pageCopy() {
   paintKey();
   $('#kSave').onclick = async () => { try { C.settings = await api('/settings', { method: 'PUT', json: { api_key: $('#kIn').value } }); $('#kIn').value = ''; paintKey(); say('cMsg', '키를 저장했어요.'); } catch (e) { say('cMsg', e.message, true); } };
   $('#kDel').onclick = async () => { C.settings = await api('/settings', { method: 'PUT', json: { api_key: '' } }); paintKey(); };
+  $('#kEng').onchange = async (e) => { C.settings = await api('/settings', { method: 'PUT', json: { engine: e.target.value } }); paintKey(); };
   $('#kModel').onchange = async (e) => { C.settings = await api('/settings', { method: 'PUT', json: { model: e.target.value } }); };
   $('#cTopic').oninput = (e) => (C.topic = e.target.value); $('#cNote').oninput = (e) => (C.note = e.target.value);
   $('#cGo').onclick = genCopy;
@@ -297,15 +300,20 @@ function pageCopy() {
 }
 function paintKey() {
   const s = C.settings; if (!s || !$('#kStat')) return;
-  $('#kStat').textContent = s.has_key ? `✅ 키가 있어요 (${s.source === 'env' ? '환경변수' : '저장된 키'} ${s.masked})` : '⚠ 키가 아직 없어요. 아래에 넣어 주세요.';
+  const viaApi = s.active_engine === 'api';
+  $('#kEng').innerHTML = Object.entries(s.engines).map(([k, v]) => `<option value="${k}" ${k === s.engine ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  $('#kKeyBox').style.display = $('#kKeyHelp').style.display = viaApi || s.engine === 'api' ? '' : 'none';
+  $('#kCliHelp').style.display = viaApi ? 'none' : '';
+  $('#kStat').textContent = viaApi ? (s.has_key ? `✅ 키가 있어요 (${s.source === 'env' ? '환경변수' : '저장된 키'} ${s.masked})` : '⚠ 키가 아직 없어요. 아래에 넣어 주세요.')
+    : (s.has_cli ? '✅ Claude Code를 찾았어요. 로그인되어 있으면 바로 쓸 수 있어요.' : '⚠ Claude Code(claude 명령)를 못 찾았어요. ' + s.no_cli_help);
   $('#kModel').innerHTML = Object.entries(s.models).map(([k, v]) => `<option value="${k}" ${k === s.model ? 'selected' : ''}>${esc(v)}</option>`).join('');
 }
 async function genCopy() {
   if (!C.settings) await loadSettings();
-  if (C.settings && !C.settings.has_key) return say('cMsg', C.settings.no_key_help, true);
+  if (C.settings && !C.settings.ready) return say('cMsg', C.settings.help, true);
   const cues = ed.project.subtitles.filter((c) => c.text.trim()).map((c) => ({ start: c.start, text: c.text }));
   if (!cues.length) return say('cMsg', '대본이 비어 있어요. AI 도구에서 자동 자막을 만들거나 자막을 넣어 주세요.', true);
-  $('#cGo').disabled = true; say('cMsg', 'Claude가 쓰는 중… (10~30초)');
+  $('#cGo').disabled = true; say('cMsg', 'Claude가 쓰는 중… (10~60초)');
   try { C.res = await job('/ai/copy', { cues, duration: ed.projectLength(), topic: C.topic, note: C.note, model: C.settings && C.settings.model }); say('cMsg', `완성! (${C.res.model}) 마음대로 고쳐서 쓰세요.`); renderCopy(); }
   catch (e) { say('cMsg', e.message, true); }
   $('#cGo').disabled = false;

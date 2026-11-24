@@ -34,6 +34,7 @@ class BeatsPlanReq(BaseModel):
 class SettingsReq(BaseModel):
     api_key: str | None = None
     model: str | None = None
+    engine: str | None = None
 
 
 class CueIn(BaseModel):
@@ -154,15 +155,15 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     @router.put("/settings")
     def put_settings(b: SettingsReq):
         try:
-            return claude_copy.save_settings(ws.root, b.api_key, b.model)
+            return claude_copy.save_settings(ws.root, b.api_key, b.model, b.engine)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
     @router.post("/ai/copy")
     def ai_copy(b: CopyReq):
-        key, _ = claude_copy.api_key(ws.root)
-        if not key:
-            raise HTTPException(503, claude_copy.NO_KEY)
+        st = claude_copy.public_settings(ws.root)
+        if not st["ready"]:
+            raise HTTPException(503, st["help"])
 
         def work():
             return claude_copy.generate(ws.root, [c.model_dump() for c in b.cues], b.duration, b.topic, b.model, b.note)
