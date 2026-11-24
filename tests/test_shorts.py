@@ -121,3 +121,22 @@ def test_safe_style_clamps_and_window_math():
     x, y, w, h = shorts.window(1920, 1080, shorts.ShortSpec(zoom=2, cx=1.0, cy=0.0))
     assert x + w <= 1920 and y == 0                       # 화면 밖으로 안 나감
     assert shorts.shift_cues([Cue(id="a", start=1, end=3, text="x")], 2, 10)[0].start == 0
+
+
+def test_fit_safe_places_video_inside_safe_area():
+    from video_editor.shorts import FORMATS, ShortSpec, video_filter
+    spec = ShortSpec(format="shorts", fit=True, fit_safe=True)
+    f = video_filter(1920, 1080, spec, 0.0, 5.0)
+    sf = FORMATS["shorts"]["safe"]
+    assert f"scale={int((sf['right'] - sf['left']) * 1080)}:{int((sf['bottom'] - sf['top']) * 1920)}:force_original_aspect_ratio=decrease" in f
+    assert "overlay=" in f and "/2:" in f and "[vshort]" in f
+    plain = video_filter(1920, 1080, ShortSpec(fit=True), 0.0, 5.0)
+    assert "overlay=(W-w)/2:(H-h)/2" in plain
+
+
+def test_subtitle_lane_stacks_upward_in_ass():
+    from video_editor.subtitles import Cue, SubtitleStyle, to_ass
+    cues = [Cue(id="a", start=0, end=2, text="one"), Cue(id="b", start=0, end=2, text="two", lane=1)]
+    ass = to_ass(cues, SubtitleStyle(y=0.8, size=0.05), 1000, 1000)
+    ys = [int(l.split("\\pos(")[1].split(")")[0].split(",")[1]) for l in ass.splitlines() if l.startswith("Dialogue")]
+    assert ys[0] > ys[1]

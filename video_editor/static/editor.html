@@ -111,6 +111,7 @@
   #frame video.pip { cursor: move; }
   #dip { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
   #subs { position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
+  #subs .cue.sel { outline: 2px dashed #6aa9ff; outline-offset: 3px; }
   #subs .cue { position: absolute; transform: translate(-50%, -50%); width: max-content; text-align: center; white-space: pre-wrap; line-height: 1.25; paint-order: stroke fill; }
   #transport { display: flex; align-items: center; gap: 6px; justify-content: center; }
   #transport button { padding: 5px 9px; }
@@ -229,6 +230,12 @@
   #srcRect { position: absolute; border: 2px solid #ff6f91; box-shadow: 0 0 0 9999px #000a; cursor: move; box-sizing: border-box; }
   #srcRect i { position: absolute; right: -8px; bottom: -8px; width: 14px; height: 14px; background: #ff6f91; border-radius: 3px; cursor: nwse-resize; }
   .srclbl { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: #fffc; text-shadow: 0 1px 3px #000; pointer-events: none; }
+  .legend { font-size: 11.5px; line-height: 1.5; margin: 4px 0 10px; padding: 8px 9px; background: #1a1d26; border-radius: 8px; }
+  .legend > div { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 4px; }
+  .legend > div.muted { display: block; }
+  .legend .sw { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 3px; }
+  .legend .hatch { background: repeating-linear-gradient(45deg, #ff6b6b99 0 3px, #0000 3px 6px); border: 1px solid #ff6b6b99; }
+  .legend .dash { border: 1.5px dashed #ff6f91; }
   #fitBg { display: none; }
   body.short #fitBg { position: absolute; inset: -6%; width: 112%; height: 112%; filter: blur(10px) brightness(.8); pointer-events: none; }
   body.short #vp:not(.fit) #fitBg { display: none; }
@@ -521,7 +528,7 @@ const fmt = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = 
 // 쇼츠·릴스 미리보기 상태 (프로젝트에 넣지 않는 보기·내보내기 설정이라 실행 취소와 따로 저장합니다)
 const SHORT_STORE = 'video_editor.short.v1';
 const SHORT = { on: false, fmt: 'shorts', formats: null, ovl: true, zones: true, k: 1, cfg: {} };
-const shortDef = () => ({ zoom: 1, cx: 0.5, cy: 0.5, fit: false, start: 0, end: null, safe: true, track: [] });
+const shortDef = () => ({ zoom: 1, cx: 0.5, cy: 0.5, fit: false, fitSafe: false, start: 0, end: null, safe: true, track: [] });
 try { Object.assign(SHORT, JSON.parse(localStorage.getItem(SHORT_STORE) || '{}'), { on: false }); } catch {}
 for (const f of ['shorts', 'reels']) SHORT.cfg[f] = { ...shortDef(), ...(SHORT.cfg[f] || {}) };
 const shortSave = () => { try { localStorage.setItem(SHORT_STORE, JSON.stringify({ fmt: SHORT.fmt, ovl: SHORT.ovl, zones: SHORT.zones, cfg: SHORT.cfg })); } catch {} };
@@ -575,6 +582,9 @@ try {
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {} };
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
+const subLanes = () => Math.max(1, ...project.subtitles.map((c) => (c.lane || 0) + 1));
+const subH = () => subLanes() * SUBH;
+const LANE_STEP = 1.45;   // 자막 트랙 한 칸 = 글자 크기 × 이 값만큼 위로 (내보내기와 같은 값)
 const cueById = (id) => project.subtitles.find((c) => c.id === id);
 const len = (c) => (c.src_out - c.src_in) / (c.speed || 1);   // 타임라인에서 차지하는 길이 (속도 반영)
 const end = (c) => c.start + len(c);
@@ -954,18 +964,18 @@ function updateSubs(t, fh) {
   const flat = (x) => x.replace(/\s+/g, '');
   const kwords = (c) => (st.karaoke && c.words && c.words.length && flat(c.words.map((w) => w.w).join('')) === flat(c.text) ? c.words : null);
   const kact = (c, w) => { let a = -1; for (let i = 0; i < w.length; i++) if (t - c.start >= w[i].s - 1e-3) a = i; return a; };
-  const key = JSON.stringify([cues.map((c) => { const w = kwords(c); return [c.id, c.text, w ? kact(c, w) : -2]; }), st, fh, SHORT.on]);
+  const key = JSON.stringify([cues.map((c) => { const w = kwords(c); return [c.id, c.text, c.lane || 0, c.id === sel.cue, w ? kact(c, w) : -2]; }), st, fh, SHORT.on]);
   if (key === subsKey) return;
   subsKey = key; target.innerHTML = '';
   const px = st.size * fh;
   for (const c of cues) {
-    const d = document.createElement('div'); d.className = 'cue'; d.textContent = c.text.trim();   // 대문자 변환은 CSS(textTransform)가 합니다
+    const d = document.createElement('div'); d.className = 'cue' + (c.id === sel.cue && !SHORT.on ? ' sel' : ''); d.dataset.cid = c.id; d.textContent = c.text.trim();   // 대문자 변환은 CSS(textTransform)가 합니다
     const kw = kwords(c);
     if (kw) {   // 낱말 강조: 말한 낱말은 강조 색
       const a = kact(c, kw), cjk = c.lang === 'ja' || c.lang === 'zh';
       d.innerHTML = kw.map((w, i) => `<span style="color:${i <= a ? st.hl_color : st.color}">${escapeHtml(w.w)}</span>`).join(cjk ? '' : ' ');
     }
-    Object.assign(d.style, cueLook(st, px), { left: st.x * 100 + '%', top: st.y * 100 + '%', maxWidth: st.max_width * 100 + '%' });
+    Object.assign(d.style, cueLook(st, px), { left: st.x * 100 + '%', top: Math.max(3, (st.y - (c.lane || 0) * st.size * LANE_STEP) * 100) + '%', maxWidth: st.max_width * 100 + '%' });
     target.appendChild(d);
   }
 }
@@ -976,7 +986,16 @@ frameEl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || SHORT.on) return;
   const b = frameEl.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
   const hit = [...pipHits].reverse().find((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
-  if (!hit) return;
+  if (!hit) {   // 미리보기에서 누른 것을 선택: 자막 → 화면 클립
+    for (const d of [...subsEl.children].reverse()) {
+      const r = d.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { const q = cueById(d.dataset.cid); if (q) { selectCue(q); return; } }
+    }
+    const t = playhead(), top = project.clips.filter((k) => (trackOf(k) || {}).kind === 'video' && k.layout !== 'pip' && t >= k.start - 1e-6 && t < end(k))
+      .sort((a, b) => project.tracks.indexOf(trackOf(b)) - project.tracks.indexOf(trackOf(a)))[0];
+    if (top) selectClip(top); else { sel.clip = null; sel.track = null; sel.cue = null; sel.subs = false; renderHeads(); renderInspector(); }
+    return;
+  }
   frameEl.setPointerCapture(e.pointerId);
   sel.clip = hit.c.id; sel.track = null; sel.cue = null; sel.subs = false; renderHeads(); renderInspector();
   begin(); pipDrag = { c: hit.c, x0: e.clientX, y0: e.clientY, ox: hit.c.pip_x, oy: hit.c.pip_y, fw: b.width, fh: b.height };
@@ -1084,10 +1103,21 @@ function removeTrack(id) {
 }
 
 // ---- 자막 트랙
-function addCue(t = playhead(), text = '새 자막') {
-  const next = project.subtitles.filter((c) => c.start > t + 0.05).map((c) => c.start).sort((a, b) => a - b)[0];
-  const cue = { id: uid(), start: Math.max(0, t), end: Math.max(0, t) + Math.min(2, next !== undefined ? Math.max(0.3, next - t) : 2), text, lang: '', source: 'manual' };
+function addCue(t = playhead(), text = '새 자막', want = null) {
+  t = Math.max(0, t);
+  // 그 시각이 비어 있는 줄에 넣고, 모든 줄이 겹치면 새 자막 트랙(줄)을 만들어요
+  const room = (lane) => {
+    const inLane = project.subtitles.filter((c) => (c.lane || 0) === lane);
+    if (inLane.some((c) => c.start - 0.05 <= t && t < c.end)) return 0;
+    const next = inLane.filter((c) => c.start > t).map((c) => c.start).sort((a, b) => a - b)[0];
+    return next === undefined ? 2 : next - t;
+  };
+  let lane = -1;
+  for (const l of [want, ...Array.from({ length: subLanes() }, (_, i) => i)]) if (l !== null && l >= 0 && l < subLanes() && room(l) >= 0.5) { lane = l; break; }
+  if (lane < 0) lane = Math.min(9, subLanes());
+  const cue = { id: uid(), start: t, end: t + Math.min(2, Math.max(0.3, room(lane) || 2)), text, lang: '', source: 'manual', words: [], emotion: '', lane };
   edit(() => { project.subtitles.push(cue); sel.cue = cue.id; sel.clip = null; sel.track = null; sel.subs = false; });
+  if (lane > 0 && !want) status(`겹치는 자리라 새 자막 트랙(${lane + 1}번째 줄)에 넣었어요.`);
   const ta = $('cText'); if (ta) { ta.focus(); ta.select(); }
 }
 function splitCue(t) {
@@ -1107,7 +1137,7 @@ async function exportSrt() {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000); status('SRT 파일을 저장했어요.');
 }
 const subTop = () => RULER;   // 자막 트랙은 눈금 바로 아래(맨 위)에 둡니다
-const tracksEnd = () => { const rs = rows(); return rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h : RULER + SUBH; };
+const tracksEnd = () => { const rs = rows(); return rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h : RULER + subH(); };
 
 // ================================================================ 트랙 머리
 const rowH = (t) => Math.round(ROW[t.kind] * (ui.rowScale || 1) * (THMULT[(ui.th || {})[t.id] ?? 1] || 1));
@@ -1115,7 +1145,7 @@ const isLocked = (t) => !!(t && ui.lock && ui.lock[t.id]);
 function rows() {   // 화면 위→아래: 영상 트랙은 위 트랙이 먼저(V2, V1), 그다음 오디오
   const v = project.tracks.filter((t) => t.kind === 'video').reverse();
   const a = project.tracks.filter((t) => t.kind === 'audio');
-  let y = RULER + SUBH;
+  let y = RULER + subH();
   return [...v, ...a].map((t) => { const r = { track: t, y, h: rowH(t) }; y += r.h; return r; });
 }
 function renderHeads() {
@@ -1170,8 +1200,8 @@ function renderHeads() {
     box.appendChild(el);
   }
   const sh = document.createElement('div');
-  sh.className = 'head subhead' + (sel.subs ? ' sel' : ''); sh.style.top = subTop() + 'px'; sh.style.height = SUBH + 'px';
-  sh.innerHTML = `<span class="tn">자막 <small>${project.subtitles.length}개</small></span>`;
+  sh.className = 'head subhead' + (sel.subs ? ' sel' : ''); sh.style.top = subTop() + 'px'; sh.style.height = subH() + 'px';
+  sh.innerHTML = `<span class="tn">자막 <small>${project.subtitles.length}개${subLanes() > 1 ? ` · 트랙 ${subLanes()}줄` : ''}</small></span>`;
   const add = document.createElement('button'); add.innerHTML = ICON('plus'); add.title = '재생 위치에 자막 넣기 (T)';
   add.onclick = (e) => { e.stopPropagation(); addCue(); };
   sh.appendChild(add);
@@ -1600,9 +1630,9 @@ function draw() {
     g.fillStyle = col('--line'); g.fillRect(0, r.y + r.h - 1, W, 1);
     if (isLocked(r.track)) { g.fillStyle = hatch(g); g.fillRect(0, r.y, W, r.h - 1); }
   }
-  const sr = { y: subTop(), h: SUBH };
+  const sr = { y: subTop(), h: subH() };
   g.fillStyle = '#1b2230'; g.fillRect(0, sr.y, W, sr.h);
-  g.fillStyle = col('--line'); g.fillRect(0, sr.y + sr.h - 1, W, 1);
+  for (let l = 0; l < subLanes(); l++) { g.fillStyle = col('--line'); g.fillRect(0, sr.y + (l + 1) * SUBH - 1, W, 1); }
   // 눈금: 큰 눈금(시간 글자) + 잔눈금, 위쪽에 쇼츠·릴스 길이 띠
   g.fillStyle = col('--ruler'); g.fillRect(0, 0, W, RULER);
   g.fillStyle = col('--line2'); g.fillRect(0, RULER - 1, W, 1);
@@ -1682,7 +1712,7 @@ function draw() {
   if (kso) drawEnvelope(g, kso, true);
   // 자막
   for (const q of project.subtitles) {
-    const x = q.start * s, w = Math.max(3, (q.end - q.start) * s), y = sr.y + 4, h = sr.h - 9;
+    const x = q.start * s, w = Math.max(3, (q.end - q.start) * s), y = sr.y + (q.lane || 0) * SUBH + 4, h = SUBH - 9;
     g.fillStyle = col('--subclip') + 'cc'; roundRect(g, x, y, w, h, 4); g.fill();
     g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
     g.fillStyle = '#fff'; g.font = '11px sans-serif'; g.fillText(q.text.replace(/\n/g, ' ') || '(빈 자막)', x + 5, y + 16);
@@ -1767,18 +1797,20 @@ function snapTime(t, xs) {
   return best === null ? [t, null] : [best, best];
 }
 let drag = null;
-const inSubRow = (y) => y >= subTop() && y < subTop() + SUBH;
-function cueHit(x) {
-  const s = pps();
+const inSubRow = (y) => y >= subTop() && y < subTop() + subH();
+const laneAt = (y) => clamp(Math.floor((y - subTop()) / SUBH), 0, subLanes() - 1);
+function cueHit(x, y) {
+  const s = pps(), lane = y === undefined ? null : laneAt(y);
   for (let i = project.subtitles.length - 1; i >= 0; i--) {
     const q = project.subtitles[i], x0 = q.start * s, x1 = q.end * s;
+    if (lane !== null && (q.lane || 0) !== lane) continue;
     if (x >= x0 - 2 && x <= x1 + 2) return { q, mode: x - x0 <= EDGE ? 'left' : x1 - x <= EDGE ? 'right' : 'move' };
   }
   return null;
 }
 canvas.addEventListener('dblclick', (e) => {
   const [x, y] = pos(e);
-  if (inSubRow(y)) { if (cueHit(x)) { const ta = $('cText'); if (ta) { ta.focus(); ta.select(); } } return; }
+  if (inSubRow(y)) { if (cueHit(x, y)) { const ta = $('cText'); if (ta) { ta.focus(); ta.select(); } } else addCue(x / pps(), '새 자막', laneAt(y)); return; }   // 빈 곳을 두 번 누르면 그 자리에 자막
   const o = kfOwner(); if (!o) return;
   const dot = kfDot(o, x, y);
   if (dot) { edit(() => o.keys.splice(o.keys.indexOf(dot), 1)); return; }   // 점을 두 번 누르면 지움
@@ -1789,7 +1821,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const [x, y] = pos(e);
   if (inSubRow(y)) {   // 자막 트랙
     canvas.setPointerCapture(e.pointerId);
-    const q = cueHit(x);
+    const q = cueHit(x, y);
     sel.clip = null; sel.track = null;
     if (!q) { sel.cue = null; sel.subs = true; seek(x / pps()); drag = { mode: 'scrub' }; renderHeads(); renderInspector(); return; }
     sel.cue = q.q.id; sel.subs = false;
@@ -1822,7 +1854,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (!drag) {
     const ko = kfOwner();
     if (ko && !inSubRow(y) && kfDot(ko, x, y)) { canvas.style.cursor = 'grab'; return; }
-    const h = inSubRow(y) ? cueHit(x) : hit(x, y);
+    const h = inSubRow(y) ? cueHit(x, y) : hit(x, y);
     const hc = h && (h.c || h.q) && !(h.c && isLocked(h.row.track)); canvas.style.cursor = hc ? (h.mode === 'move' ? 'grab' : 'ew-resize') : 'default'; return;
   }
   if (drag.mode === 'scrub') { seek(x / pps()); return; }
@@ -1841,6 +1873,7 @@ canvas.addEventListener('pointermove', (e) => {
       const [a, la] = snapTime(ns, xs), [b, lb] = snapTime(ns + len0, xs);
       if (la !== null) { ns = a; snapLine = la; } else if (lb !== null) { ns = Math.max(0, b - len0); snapLine = lb; }
       q.start = ns; q.end = ns + len0;
+      if (y >= subTop() - 4) q.lane = laneAt(y);   // 위아래로 끌면 다른 자막 줄로 옮겨요
     } else if (drag.mode === 'left') {
       const [a, la] = snapTime(Math.max(0, o.start + dt), xs); if (la !== null) snapLine = la;
       q.start = Math.min(a, o.end - 0.1);
@@ -2113,7 +2146,7 @@ canvas.addEventListener('contextmenu', (e) => {
   const [x, y] = pos(e), tc = Math.max(0, x / pps());
   if (y < RULER) return popup(e, rulerItems(tc));
   if (inSubRow(y)) {
-    const q = cueHit(x); if (!q) { sel.subs = true; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); return popup(e, subRowItems(tc)); }
+    const q = cueHit(x, y); if (!q) { sel.subs = true; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); return popup(e, subRowItems(tc)); }
     selectCue(q.q); return popup(e, cueItems(q.q, tc));
   }
   const h = hit(x, y);
@@ -3141,8 +3174,10 @@ function layoutShort() {
   const ar = canvasAspect();
   let fw, fh, left, top;
   if (c.fit) {
-    fw = vw; fh = vw / ar; if (fh > vh) { fh = vh; fw = vh * ar; }
-    left = (vw - fw) / 2; top = (vh - fh) / 2; SHORT.k = fh;
+    let bx = 0, by = 0, bw = vw, bh = vh;   // 안전 영역에 맞추기면 화면 전체 대신 안전 영역 안에 넣어요
+    if (c.fitSafe && SHORT.formats) { const sf = shortFmt().safe; bx = sf.left * vw; by = sf.top * vh; bw = (sf.right - sf.left) * vw; bh = (sf.bottom - sf.top) * vh; }
+    fw = bw; fh = bw / ar; if (fh > bh) { fh = bh; fw = bh * ar; }
+    left = bx + (bw - fw) / 2; top = by + (bh - fh) / 2; SHORT.k = fh;
   } else {
     const w = Math.min(ar, 9 / 16) / c.zoom, h = w * 16 / 9;
     const tp = trackAt(c.track, playhead());   // 자동 리프레임이 켜져 있으면 시각에 따라 구도가 움직임
@@ -3167,7 +3202,7 @@ function paintSrc(two, W, H, vw, ar) {
   const v = frameEl.querySelector('video.show:not(.pip)');
   if (v && v.videoWidth) { try { srcCtx.drawImage(v, 0, 0, w, h); } catch {} }
   const rect = $('srcRect'), lbl = $('srcLbl');
-  if (c.fit) { rect.style.display = 'none'; lbl.textContent = '원본 화면 · 전체 보이게 (자르지 않음)'; srcGeo = { w, h, rw: 0 }; return; }
+  if (c.fit) { rect.style.display = 'none'; lbl.textContent = c.fitSafe ? '원본 화면 · 안전 영역 안에 맞춤 (자르지 않음)' : '원본 화면 · 전체 보이게 (자르지 않음)'; srcGeo = { w, h, rw: 0 }; return; }
   const cw = Math.min(ar, 9 / 16) / c.zoom, ch = cw * 16 / 9, tp = trackAt(c.track, playhead());
   const cx = clamp((tp ? tp.cx : c.cx) * ar, cw / 2, ar - cw / 2), cy = clamp(tp ? tp.cy : c.cy, ch / 2, 1 - ch / 2);
   const st = { left: (cx - cw / 2) / ar * w, top: (cy - ch / 2) * h, width: cw / ar * w, height: ch * h };
@@ -3287,9 +3322,12 @@ function renderShortPanel() {
   const tab = (k) => `<button data-f="${k}" class="${SHORT.fmt === k ? 'lit' : ''}">${(SHORT.formats[k] || {}).label || k}</button>`;
   box.innerHTML = `<div id="shortPanel"><h2>쇼츠 · 릴스</h2>
     <div class="tabs">${tab('shorts')}${tab('reels')}</div>
-    <p class="tip">세로(9:16) 화면에서 앱 버튼·캡션에 가려지는 곳(빗금)을 보면서 구도를 잡고, 포맷마다 따로 저장돼요. 미리보기를 끌면 위치, 휠을 굴리면 확대. 앱 화면은 직접 만든 목업이라 실제 앱과 조금 다를 수 있어요.</p>
+<div class="legend"><div><i class="sw hatch"></i><span><b>빗금</b> = 영상은 그대로 있지만 앱 버튼·제목·캡션에 <b>덮여서 잘 안 보이는 곳</b>이에요 (영상이 잘려 나가는 게 아니에요).</span></div>
+      <div><i class="sw dash"></i><span><b>점선 안</b> = 안전 영역. 인물 얼굴과 자막은 여기에 두세요.</span></div>
+      <div class="muted">구도를 못 맞추겠으면 <b>🛡 안전 영역에 맞추기</b>를 눌러요. 왼쪽 원본 화면의 네모를 끌면 구도, 모서리는 확대예요. 앱 화면은 직접 만든 목업이라 실제와 조금 달라요.</div></div>
     <h2 class="sub">화면 맞추기</h2>
-    ${field('방식', `<select id="shFit"><option value="0" ${c.fit ? '' : 'selected'}>꽉 채우기 (자르기)</option><option value="1" ${c.fit ? 'selected' : ''}>전체 보이게 (위아래 흐린 배경)</option></select>`)}
+    ${field('방식', `<select id="shFit"><option value="0" ${c.fit ? '' : 'selected'}>꽉 채우기 (자르기)</option><option value="1" ${c.fit && !c.fitSafe ? 'selected' : ''}>전체 보이게 (위아래 흐린 배경)</option><option value="2" ${c.fit && c.fitSafe ? 'selected' : ''}>안전 영역 안에 맞추기 (앱 UI에 안 가림)</option></select>`)}
+    <div class="row" style="margin-bottom:8px"><button id="shSafeFit" class="primary" title="화면 전체를 점선 안(안전 영역)으로 줄여 넣고, 자막도 안전 영역 안으로 옮겨요. 인물이 잘리거나 버튼에 가리지 않아요.">🛡 안전 영역에 맞추기</button></div>
     ${c.fit ? '' : `${field(`확대 <b id="shZoomV">×${c.zoom.toFixed(2)}</b>`, `<input type="range" id="shZoom" min="1" max="5" step="0.01" value="${c.zoom}">`)}
     ${field('가로 위치', `<input type="range" id="shCx" min="0" max="1" step="0.005" value="${c.cx}">`)}
     ${field('세로 위치', `<input type="range" id="shCy" min="0" max="1" step="0.005" value="${c.cy}">`)}
@@ -3313,7 +3351,8 @@ function renderShortPanel() {
   $$('shOvl', 'onchange', (e) => { SHORT.ovl = e.target.checked; ovlKey = ''; shortSave(); });
   $$('shZones', 'onchange', (e) => { SHORT.zones = e.target.checked; ovlKey = ''; shortSave(); });
   $$('shSafe', 'onchange', (e) => { c.safe = e.target.checked; subsKey = ''; shortSave(); });
-  $$('shFit', 'onchange', (e) => { c.fit = e.target.value === '1'; shortSave(); renderShortPanel(); });
+  $$('shFit', 'onchange', (e) => { c.fit = e.target.value !== '0'; c.fitSafe = e.target.value === '2'; if (c.fitSafe) c.safe = true; subsKey = ''; shortSave(); renderShortPanel(); });
+  $$('shSafeFit', 'onclick', () => { Object.assign(c, { fit: true, fitSafe: true, safe: true }); subsKey = ''; shortSave(); renderShortPanel(); });
   for (const [id, k] of [['shZoom', 'zoom'], ['shCx', 'cx'], ['shCy', 'cy']]) $$(id, 'oninput', (e) => { c[k] = +e.target.value; shortSync(); shortSave(); });
   $$('shReset', 'onclick', () => { Object.assign(c, { zoom: 1, cx: 0.5, cy: 0.5 }); shortSave(); renderShortPanel(); });
   const L = () => projectLength();
@@ -3361,7 +3400,7 @@ async function exportShorts(fmts) {
       const start = clamp(c.start || 0, 0, Math.max(0, L - 0.2)), end = clamp(c.end == null ? L : c.end, start + 0.2, L);
       if (end - start > lim + 1e-6) throw new Error(`${SHORT.formats[fm].label}는 최대 ${lim}초예요. 길이 줄이기에서 구간을 줄여 주세요. (지금 ${(end - start).toFixed(1)}초)`);
       status(`${SHORT.formats[fm].label} 내보내는 중… (시간이 걸려요)`);
-      const spec = { format: fm, start, end, zoom: c.zoom, cx: c.cx, cy: c.cy, fit: c.fit, safe_subs: c.safe, track: c.fit ? [] : (c.track || []).slice(0, 400) };
+      const spec = { format: fm, start, end, zoom: c.zoom, cx: c.cx, cy: c.cy, fit: c.fit, fit_safe: c.fit && c.fitSafe, safe_subs: c.safe, track: c.fit ? [] : (c.track || []).slice(0, 400) };
       const r = await fetch('/api/export/short', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: projectBody(), spec }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '내보내기 실패');
       done.push({ fm, ...(await r.json()) });

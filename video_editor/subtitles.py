@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 # ASS의 글자 크기는 '줄 높이' 기준이라 같은 숫자여도 CSS보다 글자가 작게 나옵니다. 한글·영문 글꼴에서 미리보기와
 # 비슷해지게 키워 주는 값 (글꼴마다 몇 % 다를 수 있어요).
 ASS_SIZE_FACTOR = 1.25
+LANE_STEP = 1.45   # 자막 트랙 한 칸 = 글자 크기 × 이 값만큼 위로 (미리보기도 같은 값)
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -34,6 +35,7 @@ class Cue(BaseModel):
     source: Literal["manual", "ai", "translation"] = "manual"
     words: list[CueWord] = []                       # 있으면 낱말별 강조(카라오케) 자막에 씁니다
     emotion: str = ""                               # 더빙할 때 이 문장을 읽는 감정 ("" = 자동)
+    lane: int = Field(0, ge=0, le=9)                # 자막 트랙 번호 (0이 맨 위 줄). 시간이 겹치면 위쪽으로 쌓아 보여줘요
 
 
 class SubtitleStyle(BaseModel):
@@ -160,10 +162,13 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
         lines.append(row("Box", "&HFF000000", _ass_rgb(bg, style.bg_opacity), "&H00000000", 3, box_pad))
     lines += ["", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"]
     glow = f"\\blur{round(style.glow * px * 0.2, 1)}" if style.glow > 0 else ""
-    base = f"\\an5\\pos({round(style.x * width)},{round(style.y * height)})"
-    pos, box_pos = f"{{{base}{glow}}}", f"{{{base}}}"
+    def at(c: Cue) -> tuple[str, str]:
+        y = max(0.03, style.y - c.lane * style.size * LANE_STEP)     # 겹치는 자막은 트랙 번호만큼 위로 쌓습니다
+        base = f"\\an5\\pos({round(style.x * width)},{round(y * height)})"
+        return f"{{{base}{glow}}}", f"{{{base}}}"
     for c in active_cues(cues, lang, length):
         end = c.end if length is None else min(c.end, length)
+        pos, box_pos = at(c)
         shown = c.text.upper() if style.upper else c.text
         text = pos + _ass_text(shown)
         words = karaoke_words(c) if kara else None

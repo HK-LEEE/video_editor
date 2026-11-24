@@ -37,6 +37,7 @@ class ShortSpec(BaseModel):
     cx: float = Field(0.5, ge=0.0, le=1.0)        # 잘라낼 영역의 가운데 (원본 화면 비율)
     cy: float = Field(0.5, ge=0.0, le=1.0)
     fit: bool = False                             # 켜면 자르지 않고 전체를 폭에 맞춰 넣고 위아래는 흐린 배경으로 채움
+    fit_safe: bool = False                        # fit과 함께 켜면 화면 전체를 '안전 영역' 안에 맞춰 줄여 넣음 (앱 UI에 안 가림)
     safe_subs: bool = True                        # 자막을 안전 영역 안으로 옮김
     track: list[TrackPoint] = Field(default_factory=list, max_length=400)   # 자동 리프레임: 시각마다 구도 중심 (있으면 cx·cy 대신 따라갑니다)
 
@@ -106,6 +107,14 @@ def track_keys(spec: ShortSpec, start: float) -> list[tuple[float, float, float]
 def video_filter(W: int, H: int, spec: ShortSpec, start: float, end: float) -> str:
     """합성된 [vbase]에서 구간을 자르고 1080×1920 [vshort]로 만드는 filter_complex 조각."""
     head = f"[vbase]trim=start={start:.4f}:end={end:.4f},setpts=PTS-STARTPTS"
+    if spec.fit and spec.fit_safe:
+        sf = FORMATS[spec.format]["safe"]
+        sw, sh = int((sf["right"] - sf["left"]) * OUT_W), int((sf["bottom"] - sf["top"]) * OUT_H)
+        cx, cy = round((sf["left"] + sf["right"]) / 2 * OUT_W), round((sf["top"] + sf["bottom"]) / 2 * OUT_H)
+        return (f"{head},split[sa][sb];"
+                f"[sa]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},boxblur=30:5,eq=brightness=-0.15[sbg];"
+                f"[sb]scale={sw}:{sh}:force_original_aspect_ratio=decrease,setsar=1[sfg];"
+                f"[sbg][sfg]overlay={cx}-w/2:{cy}-h/2,setsar=1,format=yuv420p[vshort]")
     if spec.fit:
         return (f"{head},split[sa][sb];"
                 f"[sa]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},boxblur=30:5,eq=brightness=-0.15[sbg];"
