@@ -15,7 +15,7 @@ import soundfile as sf
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import ai_tools, characters, emotion, highlights, reframe, separate
+from . import ai_tools, characters, emotion, highlights, reframe, separate, voice_sample
 from .editor import SR, Workspace, _check_id, add_media, character_audio, media_audio, remove_media, stretch
 from .engine import peak_limit, save_wav
 from .presets import load_presets
@@ -59,6 +59,18 @@ class TtsReq(BaseModel):
     level: float = Field(1.0, ge=0.0, le=2.0)   # 감정의 세기
     character: str = ""           # 보이스 캐릭터 id (비우면 읽는 엔진의 목소리 그대로)
     sample: str = ""              # 캐릭터 없이 샘플 목소리(보관함 소리 파일 id)로 바로 바꿔 읽기 (AI 음성 변환)
+
+
+class VoiceAnalyzeReq(BaseModel):
+    media: str
+
+
+class VoicePrepareReq(BaseModel):
+    media: str
+    start: float | None = Field(None, ge=0)     # 비우면 좋은 구간을 자동으로 고릅니다
+    end: float | None = Field(None, gt=0)
+    denoise: bool = True
+    name: str = Field("목소리", min_length=1, max_length=40)
 
 
 class TranslateReq(BaseModel):
@@ -424,6 +436,40 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
                     "spans": [{**sp, "label": emotion.EMOTIONS[sp["emotion"]]} for sp in spans]}
 
         return launch("tts", f"{b.lang}:{b.rate}:{b.voice}:{b.emotion}:{b.level}:{b.character}:{b.sample}:{hash(b.text)}", work)
+
+    @router.post("/voice/analyze")
+    def voice_analyze(b: VoiceAnalyzeReq):
+        audio_media(b.media)
+        return voice_sample.analyze(media_audio(ws, b.media), SR)
+
+    @router.post("/voice/prepare")
+    def voice_prepare(b: VoicePrepareReq):
+        """샘플 구간을 잘라 (선택: 잡음 제거) 보관함에 '목소리 샘플'로 올립니다."""
+        audio_media(b.media)
+
+        def work():
+            x = media_audio(ws, b.media)
+            info = voice_sample.analyze(x, SR)
+            start = info["start"] if b.start is None else b.start
+            end = info["end"] if b.end is None else b.end
+            end = min(end, x.size / SR, start + voice_sample.MAX_S + 10)
+            if end - start < 1.0:
+                raise RuntimeError("고른 구간이 너무 짧아요 (1초 이상).")
+            seg = x[int(start * SR): int(end * SR)].copy()
+            peak = float(np.abs(seg).max()) or 1.0
+            seg *= min(4.0, 0.9 / peak)
+            tmp = ws.root / "cache" / f"vs_{uuid.uuid4().hex}.wav"
+            save_wav(tmp, seg)
+            engine = "none"
+            if b.denoise:
+                tmp2 = ws.root / "cache" / f"vs_{uuid.uuid4().hex}.wav"
+                engine = ai_tools.denoise(tmp, tmp2)
+                tmp.unlink(missing_ok=True)
+                tmp = tmp2
+            meta = add_media(ws, tmp, f"목소리 샘플 · {b.name}.wav")
+            return {"media": meta, "start": round(start, 2), "end": round(end, 2), "engine": engine, "analysis": info}
+
+        return launch("voice", f"{b.media}:{b.start}:{b.end}:{b.denoise}:{b.name}", work)
 
     @router.post("/ai/translate")
     def translate(b: TranslateReq):

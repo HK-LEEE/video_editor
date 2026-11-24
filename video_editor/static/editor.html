@@ -221,6 +221,14 @@
   #shortSubs, #ovl { display: none; }
   body.short #vp { display: block; position: relative; overflow: hidden; background: #000; border-radius: 22px; box-shadow: 0 0 0 6px #1c1c20, 0 8px 30px #000c; flex: none; touch-action: none; cursor: grab; }
   body.short #vp.drag { cursor: grabbing; }
+  #srcView { display: none; }
+  body.short #stage { display: flex; gap: 20px; align-items: center; justify-content: center; }
+  body.short #srcView { display: block; position: relative; flex: none; background: #000; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px #ffffff26; touch-action: none; }
+  body.short #srcView.nosrc { display: none; }
+  #srcCv { width: 100%; height: 100%; display: block; }
+  #srcRect { position: absolute; border: 2px solid #ff6f91; box-shadow: 0 0 0 9999px #000a; cursor: move; box-sizing: border-box; }
+  #srcRect i { position: absolute; right: -8px; bottom: -8px; width: 14px; height: 14px; background: #ff6f91; border-radius: 3px; cursor: nwse-resize; }
+  .srclbl { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: #fffc; text-shadow: 0 1px 3px #000; pointer-events: none; }
   #fitBg { display: none; }
   body.short #fitBg { position: absolute; inset: -6%; width: 112%; height: 112%; filter: blur(10px) brightness(.8); pointer-events: none; }
   body.short #vp:not(.fit) #fitBg { display: none; }
@@ -346,7 +354,7 @@
     <div class="ph"><div class="tabs2"><button id="monTabP" class="lit">프로그램</button><button id="monTabS">소스</button></div><span class="meta" id="monMeta"></span><span style="flex:1"></span>
       <button id="binShow" title="보관함 보이기" hidden><svg class="ic"><use href="#i-panel-l"/></svg></button><button id="dockShow" title="속성 패널 보이기" hidden><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
     <div id="monBody">
-      <div id="stage"><div id="vp"><canvas id="fitBg" width="54" height="96"></canvas><div id="frame"><div id="dip"></div><div id="subs"></div></div><div id="shortSubs"></div><div id="ovl"></div></div></div>
+      <div id="stage"><div id="srcView"><canvas id="srcCv"></canvas><div id="srcRect"><i id="srcHdl"></i></div><span class="srclbl" id="srcLbl"></span></div><div id="vp"><canvas id="fitBg" width="54" height="96"></canvas><div id="frame"><div id="dip"></div><div id="subs"></div></div><div id="shortSubs"></div><div id="ovl"></div></div></div>
       <div id="transport">
         <button id="homeBtn" title="Home"><svg class="ic"><use href="#i-home"/></svg></button>
         <button id="prevBtn" title="이전 경계 ["><svg class="ic"><use href="#i-prev"/></svg></button>
@@ -363,9 +371,29 @@
   </section>
   <div id="hs2" class="split" role="separator" aria-orientation="vertical"></div>
   <section id="dock" class="panel">
-    <div class="ph"><div class="tabs2"><button id="dkTabI" class="lit"><svg class="ic"><use href="#i-sliders"/></svg>속성</button><button id="dkTabA"><svg class="ic"><use href="#i-spark"/></svg>AI 도구</button></div><span style="flex:1"></span><button id="dockHide" title="패널 접기"><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
+    <div class="ph"><div class="tabs2"><button id="dkTabI" class="lit"><svg class="ic"><use href="#i-sliders"/></svg>속성</button><button id="dkTabA"><svg class="ic"><use href="#i-spark"/></svg>AI 도구</button><button id="dkTabV"><svg class="ic"><use href="#i-wave"/></svg>목소리</button></div><span style="flex:1"></span><button id="dockHide" title="패널 접기"><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
     <div class="pb">
       <div id="inspector" class="dockpane on"></div>
+      <div id="voiceDlg" class="dockpane">
+        <h3 style="margin:0 0 2px;font-size:14px">🎙 목소리 등록</h3>
+        <p class="muted">내 목소리나 더빙 성우처럼 쓰고 싶은 목소리를 한 번 등록해 두면, 대본 읽기·번역 더빙·보이스 캐릭터에서 이름으로 골라 써요. 학습은 필요 없고 깨끗한 10~30초 샘플이면 돼요.</p>
+        <section><h3>등록한 목소리</h3><div id="vReg"></div></section>
+        <section><h3>1. 소리 가져오기</h3>
+          <div class="row"><select id="vSrc" style="flex:1;min-width:0"></select></div>
+          <div class="row" style="margin-top:6px"><button id="vUp">📁 파일 올리기</button><button id="vRec">🎤 녹음 시작</button></div>
+          <input type="file" id="vFile" accept="audio/*,video/*" hidden>
+          <p class="muted" id="vRecMsg">조용한 곳에서 한 사람만 말하는 소리가 좋아요. 영상 파일도 돼요.</p></section>
+        <section><h3>2. 샘플 구간</h3>
+          <div class="row"><span class="muted">시작</span><input type="number" id="vS" step="0.1" min="0" style="width:70px"><span class="muted">끝</span><input type="number" id="vE" step="0.1" min="0" style="width:70px"><span class="muted">초</span></div>
+          <div class="row" style="margin-top:6px"><button id="vAuto">✨ 좋은 구간 자동 찾기</button><button id="vListen">▶ 구간 듣기</button></div>
+          <p class="muted" id="vInfo"></p></section>
+        <section><h3>3. 다듬고 등록</h3>
+          <label class="check"><input type="checkbox" id="vDn" checked> 잡음 제거 (배경 소리·웅웅거림 줄이기)</label>
+          <div class="row" style="margin-top:6px"><input type="text" id="vName" placeholder="목소리 이름 (예: 내 목소리, 성우 김OO)" maxlength="40"></div>
+          <textarea id="vTxt" rows="2" style="margin-top:6px">안녕하세요, 이 목소리로 읽어 본 예문이에요. 어떻게 들리나요?</textarea>
+          <div class="row" style="margin-top:6px"><button id="vPrep">🔊 다듬어서 예문 들어 보기</button><button id="vSave" class="primary">이 목소리로 등록</button></div>
+          <p class="muted" id="vMsg"></p></section>
+      </div>
       <div id="aiDlg" class="dockpane">
         <div class="aihead"><span class="muted" id="aiTarget"></span><button id="aiClose">속성으로</button></div>
         <p id="aiSetup" class="muted"></p>
@@ -607,7 +635,7 @@ function renderBin() {
     el.ondblclick = () => { setMonTab(false); placeAtPlayhead(m.id); };
     $('mediaList').appendChild(el);
   }
-  try { refreshVoiceOpts(); } catch {}   // 읽기·더빙의 샘플 목소리 목록도 새 파일에 맞춰요
+  try { refreshVoiceOpts(); refreshVoicePage(); } catch {}   // 읽기·더빙의 샘플 목소리 목록도 새 파일에 맞춰요
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 async function uploadFiles(files, opts = {}) {
@@ -2394,12 +2422,12 @@ window.addEventListener('resize', () => applyLayout());
 
 // ---- 오른쪽 패널 탭: 속성 / AI 도구
 function setDock(which) {
-  const ai = which === 'ai';
-  $('inspector').classList.toggle('on', !ai); $('aiDlg').classList.toggle('on', ai);
-  $('dkTabI').classList.toggle('lit', !ai); $('dkTabA').classList.toggle('lit', ai); $('aiBtn').classList.toggle('lit', ai);
+  const ai = which === 'ai', vo = which === 'voice';
+  $('inspector').classList.toggle('on', !ai && !vo); $('aiDlg').classList.toggle('on', ai); $('voiceDlg').classList.toggle('on', vo);
+  $('dkTabI').classList.toggle('lit', !ai && !vo); $('dkTabA').classList.toggle('lit', ai); $('dkTabV').classList.toggle('lit', vo); $('aiBtn').classList.toggle('lit', ai);
   if (!ui.dockOpen) { ui.dockOpen = true; applyLayout(); }
 }
-$('dkTabI').onclick = () => setDock('insp'); $('dkTabA').onclick = () => openAi();
+$('dkTabI').onclick = () => setDock('insp'); $('dkTabA').onclick = () => openAi(); $('dkTabV').onclick = () => openVoice();
 
 // ---- 작업공간 프리셋
 const WS = {
@@ -2828,7 +2856,7 @@ function aiDuckOff() {
 const charOpts = (sel) => {
   const smp = Object.values(media).filter((m) => m.has_audio);
   return `<option value="">기본 목소리 (읽는 엔진 그대로)</option>`
-    + (chars.length ? `<optgroup label="🎭 보이스 캐릭터">${chars.map((c) => `<option value="c:${c.id}" ${'c:' + c.id === sel ? 'selected' : ''}>🎭 ${escapeHtml(c.name)}${c.ref ? ' (AI 샘플)' : ''}</option>`).join('')}</optgroup>` : '')
+    + (chars.length ? `<optgroup label="🎭 보이스 캐릭터">${chars.map((c) => `<option value="c:${c.id}" ${'c:' + c.id === sel ? 'selected' : ''}>${c.ref ? '🎙' : '🎭'} ${escapeHtml(c.name)}${c.ref ? ' (등록한 목소리)' : ''}</option>`).join('')}</optgroup>` : '')
     + (smp.length ? `<optgroup label="📁 샘플 목소리로 바꿔 읽기 (학습 없이 · AI 변환)">${smp.map((m) => `<option value="s:${m.id}" ${'s:' + m.id === sel ? 'selected' : ''}>📁 ${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('')}</optgroup>` : '');
 };
 const voiceArgs = (v) => (v.startsWith('c:') ? { character: v.slice(2) } : v.startsWith('s:') ? { sample: v.slice(2) } : {});
@@ -2845,6 +2873,7 @@ async function loadChars() {
   voices = await (await fetch('/api/voices')).json().catch(() => voices); renderInspector();
 }
 function renderChars() {
+  try { vRegList(); } catch {}
   const presetLabel = (n) => (voices.find((v) => v.name === n) || { label: n }).label;
   $('aiChars').innerHTML = chars.length ? chars.map((c) => `<div class="chl"><div class="t">🎭 ${escapeHtml(c.name)}<small>${c.preset === 'original' ? '' : escapeHtml(presetLabel(c.preset)) + ' ×' + (+c.intensity).toFixed(1)}${c.ref ? ' · AI 샘플: ' + escapeHtml((media[c.ref] || {}).name || '?') : ''}${c.preset === 'original' && !c.ref ? '변조 없음' : ''}</small></div>
     <button data-ch="${c.id}" data-act="use" title="고른 클립(또는 재생 위치의 클립)의 목소리로 적용">적용</button><button data-ch="${c.id}" data-act="edit">수정</button><button data-ch="${c.id}" data-act="del">삭제</button></div>`).join('')
@@ -2928,6 +2957,111 @@ $('aiTtsPrev').onclick = async () => {
   } catch (e) { say('⚠ ' + (e.message || e), true); }
   finally { aiBusy = false; $('aiTtsPrev').disabled = false; }
 };
+
+// ================================================================ 🎙 목소리 등록
+const V = { prepared: null, rec: null, busy: false };
+const vSay = (m, err) => { const e = $('vMsg'); e.textContent = m; e.className = 'muted' + (err ? ' err' : ''); if (err) e.style.color = 'var(--rec)'; else e.style.color = ''; };
+function vSrcOptions() {
+  const keep = $('vSrc').value, list = Object.values(media).filter((m) => m.has_audio && !m.name.startsWith('목소리 샘플'));
+  $('vSrc').innerHTML = list.length ? list.map((m) => `<option value="${m.id}" ${m.id === keep ? 'selected' : ''}>${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('') : '<option value="">(보관함에 소리가 없어요 — 올리거나 녹음하세요)</option>';
+}
+function vRegList() {
+  const regs = chars.filter((c) => c.ref);
+  $('vReg').innerHTML = regs.length ? regs.map((c) => `<div class="chl"><div class="t">🎙 ${escapeHtml(c.name)}<small>샘플: ${escapeHtml((media[c.ref] || {}).name || '?')}</small></div>
+    <button data-vp="${c.id}" title="예문을 이 목소리로 읽어 들어 봐요">▶ 예문</button><button data-vd="${c.id}">삭제</button></div>`).join('')
+    : '<p class="muted">아직 없어요. 아래 순서대로 만들어 보세요.</p>';
+}
+function refreshVoicePage() { vSrcOptions(); vRegList(); }
+async function openVoice() {
+  setDock('voice'); refreshVoicePage();
+  if ($('vSrc').value && $('vE').value === '') vAnalyze();
+}
+async function vAnalyze() {
+  const id = $('vSrc').value; V.prepared = null; if (!id) return;
+  $('vInfo').textContent = '분석 중…';
+  const r = await fetch('/api/voice/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ media: id }) });
+  const j = await r.json(); if (!r.ok) { $('vInfo').textContent = '⚠ ' + (j.detail || '분석 실패'); return; }
+  $('vS').value = j.start.toFixed(2); $('vE').value = j.end.toFixed(2);
+  const len = j.end - j.start;
+  $('vInfo').innerHTML = `${len.toFixed(1)}초 구간을 골랐어요 (말하는 시간 ${j.speech_s}초 · 전체 ${j.duration}초). ` + (j.warnings.length ? j.warnings.map((w) => '⚠ ' + escapeHtml(w)).join(' ') : '✅ 샘플로 쓰기 좋아요.')
+    + (len > 32 ? ' 30초보다 길면 느려지기만 하니 줄이는 게 좋아요.' : '');
+  if (!$('vName').value) { const n = ((media[id] || {}).name || '').replace(/\.[^.]+$/, ''); $('vName').value = n.slice(0, 20); }
+}
+$('vSrc').onchange = () => { $('vE').value = ''; vAnalyze(); };
+$('vAuto').onclick = vAnalyze;
+$('vS').onchange = $('vE').onchange = () => { V.prepared = null; };
+let vAudio = null;
+$('vListen').onclick = () => {
+  if (vAudio) { vAudio.pause(); vAudio = null; $('vListen').textContent = '▶ 구간 듣기'; return; }
+  const id = $('vSrc').value; if (!id) return;
+  const s = +$('vS').value || 0, e = +$('vE').value || 1e9;
+  vAudio = new Audio(`/api/media/${id}/file`);
+  vAudio.onloadedmetadata = () => { vAudio.currentTime = s; vAudio.play().catch(() => {}); };
+  vAudio.ontimeupdate = () => { if (vAudio && vAudio.currentTime >= e) { vAudio.pause(); vAudio = null; $('vListen').textContent = '▶ 구간 듣기'; } };
+  vAudio.onended = () => { vAudio = null; $('vListen').textContent = '▶ 구간 듣기'; };
+  $('vListen').textContent = '■ 멈추기';
+};
+$('vUp').onclick = () => $('vFile').click();
+$('vFile').onchange = async (e) => {
+  const out = await uploadFiles([...e.target.files]); e.target.value = '';
+  const m = out.find((x) => x.has_audio); if (!m) return;
+  vSrcOptions(); $('vSrc').value = m.id; $('vE').value = ''; vAnalyze();
+};
+$('vRec').onclick = async () => {
+  if (V.rec) { V.rec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+    const rec = new MediaRecorder(stream), chunks = [], t0 = Date.now();
+    V.rec = rec;
+    const tick = setInterval(() => ($('vRec').textContent = `■ 녹음 끝내기 (${Math.round((Date.now() - t0) / 1000)}초)`), 300);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = async () => {
+      clearInterval(tick); stream.getTracks().forEach((t) => t.stop()); V.rec = null; $('vRec').textContent = '🎤 녹음 시작';
+      const out = await uploadFiles([new File(chunks, 'rec.webm')], { recorded: true, name: `목소리 녹음 ${new Date().toTimeString().slice(0, 5)}.wav` });
+      if (out[0]) { vSrcOptions(); $('vSrc').value = out[0].id; $('vE').value = ''; vAnalyze(); $('vRecMsg').textContent = `✅ ${out[0].duration.toFixed(0)}초 녹음했어요. 10~30초면 충분해요.`; }
+    };
+    rec.start(); $('vRecMsg').textContent = '🔴 녹음 중… 평소 말투로 또박또박, 한두 문단 읽어 주세요.';
+  } catch (err) { $('vRecMsg').textContent = '⚠ 마이크를 쓸 수 없어요: ' + (err.message || err); }
+};
+async function vPrepare() {
+  const id = $('vSrc').value; if (!id) throw new Error('먼저 소리를 고르거나 녹음해 주세요.');
+  const name = $('vName').value.trim(); if (!name) throw new Error('목소리 이름을 적어 주세요.');
+  if (V.prepared && V.prepared.key === `${id}|${$('vS').value}|${$('vE').value}|${$('vDn').checked}`) return V.prepared;
+  vSay('샘플을 자르고 다듬는 중…');
+  const res = await aiJob('/api/voice/prepare', { media: id, start: +$('vS').value || null, end: +$('vE').value || null, denoise: $('vDn').checked, name }, vSay);
+  media[res.media.id] = res.media; renderBin();
+  V.prepared = { ...res.media, key: `${id}|${$('vS').value}|${$('vE').value}|${$('vDn').checked}`, engine: res.engine };
+  return V.prepared;
+}
+async function vPlayTts(body) {
+  const res = await aiJob('/api/ai/tts', { text: $('vTxt').value.trim().slice(0, 120) || '안녕하세요.', lang: 'ko', rate: 1, emotion: 'neutral', level: 1, ...body }, vSay);
+  const a = new Audio(`/api/media/${res.media.id}/file`);
+  a.onended = a.onerror = () => fetch(`/api/media/${res.media.id}`, { method: 'DELETE' });
+  await a.play();
+}
+async function vGuard(fn) {
+  if (V.busy) return; V.busy = true; document.querySelectorAll('#voiceDlg button').forEach((b) => (b.disabled = true));
+  try { await fn(); } catch (e) { vSay('⚠ ' + (e.message || e), true); }
+  finally { V.busy = false; document.querySelectorAll('#voiceDlg button').forEach((b) => (b.disabled = false)); }
+}
+$('vPrep').onclick = () => vGuard(async () => {
+  const p = await vPrepare();
+  vSay(`✅ 샘플 준비 완료 (${p.duration.toFixed(1)}초${p.engine !== 'none' ? ' · 잡음 제거됨' : ''}). 예문을 이 목소리로 읽는 중… (처음엔 모델을 내려받느라 오래 걸려요)`);
+  try { await vPlayTts({ sample: p.id }); vSay('▶ 재생 중. 마음에 들면 [이 목소리로 등록]을 누르세요.'); }
+  catch (e) { vSay(`샘플은 준비됐어요. 하지만 예문 미리듣기는 실패했어요: ${e.message || e}\n그래도 등록은 할 수 있어요.`, true); }
+});
+$('vSave').onclick = () => vGuard(async () => {
+  const p = await vPrepare(), name = $('vName').value.trim();
+  const r = await fetch('/api/characters', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, preset: 'original', intensity: 1, ref: p.id }) });
+  const j = await r.json(); if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : '저장 실패');
+  await loadChars(); V.prepared = null; vSay(`✅ '${name}' 목소리를 등록했어요. 대본 읽기·번역 더빙의 '읽을 목소리'와 클립의 목소리 목록에 🎙로 나와요.`);
+});
+$('vReg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.vd) vGuard(async () => { await fetch(`/api/characters/${b.dataset.vd}`, { method: 'DELETE' }); await loadChars(); vSay('지웠어요. (샘플 파일은 보관함에 그대로 있어요)'); });
+  else if (b.dataset.vp) vGuard(async () => { vSay('예문을 읽는 중…'); await vPlayTts({ character: b.dataset.vp }); vSay('▶ 재생 중'); });
+});
+
 const AI_SECTIONS = [
   ['aiS1', aiSubs], ['aiS2', aiCutScan], ['aiS2b', aiCutApply], ['aiS3', aiSceneScan], ['aiS3b', aiSceneApply],
   ['aiS4', aiDenoise], ['aiS5', aiTts], ['aiS5b', aiTtsPlan], ['aiS6', aiDub],
@@ -3000,7 +3134,10 @@ function trackAt(tr, t) {   // 리프레임 점 사이를 직선으로 이은 �
 function layoutShort() {
   const vp = $('vp'), W = stage.clientWidth, H = stage.clientHeight, c = shortCfg();
   if (W < 40 || H < 40) return;
-  let vh = Math.min(H - 12, (W - 12) * 16 / 9); vh = Math.max(120, Math.floor(vh)); const vw = Math.floor(vh * 9 / 16);
+  const two = W >= 620 && !!frameEl.querySelector('video.show:not(.pip)') && !!$('srcView');
+  let vh, vw;
+  if (two) { vw = Math.min((H - 12) * 9 / 16, (W - 12) * 0.34); vh = Math.max(120, Math.floor(vw * 16 / 9)); vw = Math.floor(vh * 9 / 16); }
+  else { vh = Math.min(H - 12, (W - 12) * 16 / 9); vh = Math.max(120, Math.floor(vh)); vw = Math.floor(vh * 9 / 16); }
   const ar = canvasAspect();
   let fw, fh, left, top;
   if (c.fit) {
@@ -3015,9 +3152,50 @@ function layoutShort() {
   const set = (el, o) => { for (const [k, v] of Object.entries(o)) { const s = typeof v === 'number' ? v + 'px' : v; if (el.style[k] !== s) el.style[k] = s; } };
   set(vp, { width: vw, height: vh });
   vp.classList.toggle('fit', !!c.fit); if (c.fit) paintFitBg();
+  paintSrc(two, W, H, vw, ar);
   set(frameEl, { width: fw, height: fh, left, top });
   paintOverlay(vw, vh);
 }
+// 왼쪽 '원본 화면': 지금 장면 전체와 잘려 나가는 영역(분홍 네모). 네모를 끌면 구도, 모서리를 끌면 확대 — 오른쪽 폰 화면이 바로 따라 바뀌어요
+const srcCtx = $('srcCv').getContext('2d'); let srcGeo = { w: 0, h: 0, rw: 0 };
+function paintSrc(two, W, H, vw, ar) {
+  const sv = $('srcView'), c = shortCfg();
+  sv.classList.toggle('nosrc', !two); if (!two) return;
+  const w = Math.max(160, Math.floor(Math.min(W - vw - 20 - 12, (H - 12) * ar))), h = Math.floor(w / ar);
+  if (sv.style.width !== w + 'px') sv.style.width = w + 'px'; if (sv.style.height !== h + 'px') sv.style.height = h + 'px';
+  const cv = $('srcCv'); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const v = frameEl.querySelector('video.show:not(.pip)');
+  if (v && v.videoWidth) { try { srcCtx.drawImage(v, 0, 0, w, h); } catch {} }
+  const rect = $('srcRect'), lbl = $('srcLbl');
+  if (c.fit) { rect.style.display = 'none'; lbl.textContent = '원본 화면 · 전체 보이게 (자르지 않음)'; srcGeo = { w, h, rw: 0 }; return; }
+  const cw = Math.min(ar, 9 / 16) / c.zoom, ch = cw * 16 / 9, tp = trackAt(c.track, playhead());
+  const cx = clamp((tp ? tp.cx : c.cx) * ar, cw / 2, ar - cw / 2), cy = clamp(tp ? tp.cy : c.cy, ch / 2, 1 - ch / 2);
+  const st = { left: (cx - cw / 2) / ar * w, top: (cy - ch / 2) * h, width: cw / ar * w, height: ch * h };
+  for (const [k, x] of Object.entries(st)) { const t = x + 'px'; if (rect.style[k] !== t) rect.style[k] = t; }
+  rect.style.display = ''; srcGeo = { w, h, rw: st.width };
+  const t = tp ? '원본 화면 · 자동 따라가기 중 (끌면 꺼져요)' : '원본 화면 · 네모를 끌어 옮기고, 모서리로 크기 조절'; if (lbl.textContent !== t) lbl.textContent = t;
+}
+(function () {
+  const sv = $('srcView'); let d = null;
+  const grab = (c) => { if (c.track.length) { const tp = trackAt(c.track, playhead()); if (tp) { c.cx = tp.cx; c.cy = tp.cy; } c.track = []; shortSave(); renderShortPanel(); } };
+  const pos = (e) => { const b = sv.getBoundingClientRect(); return { x: (e.clientX - b.left) / srcGeo.w, y: (e.clientY - b.top) / srcGeo.h }; };
+  sv.addEventListener('pointerdown', (e) => {
+    if (!SHORT.on || e.button !== 0) return; const c = shortCfg(); if (c.fit) return;
+    e.preventDefault(); e.stopPropagation(); grab(c); sv.setPointerCapture(e.pointerId);
+    const p = pos(e), zoom = !!e.target.closest('#srcHdl');
+    if (!zoom && !e.target.closest('#srcRect')) { c.cx = clamp(p.x, 0, 1); c.cy = clamp(p.y, 0, 1); }   // 빈 곳을 누르면 그곳이 가운데
+    d = { zoom, x: e.clientX, y: e.clientY, cx: c.cx, cy: c.cy, rw: srcGeo.rw, z: c.zoom };
+  });
+  sv.addEventListener('pointermove', (e) => {
+    if (!d) return; const c = shortCfg(), ar = canvasAspect();
+    if (d.zoom) { const full = Math.min(ar, 9 / 16) / ar * srcGeo.w, nw = clamp(d.rw + 2 * (e.clientX - d.x), full / 5, full); c.zoom = clamp(full / nw, 1, 5); }
+    else { c.cx = clamp(d.cx + (e.clientX - d.x) / srcGeo.w, 0, 1); c.cy = clamp(d.cy + (e.clientY - d.y) / srcGeo.h, 0, 1); }
+    shortSync();
+  });
+  const up = () => { if (d) { d = null; shortSave(); } };
+  sv.addEventListener('pointerup', up); sv.addEventListener('pointercancel', up);
+  sv.addEventListener('wheel', (e) => { if (!SHORT.on || shortCfg().fit) return; e.preventDefault(); const c = shortCfg(); c.zoom = clamp(c.zoom * Math.exp(-e.deltaY * 0.0015), 1, 5); shortSync(); shortSave(); }, { passive: false });
+})();
 // '전체 보이게' 미리보기: 내보내기처럼 같은 화면을 흐리게 키워 위아래 빈 곳을 채웁니다
 const fitCtx = $('fitBg').getContext('2d');
 function paintFitBg() {
