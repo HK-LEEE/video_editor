@@ -642,8 +642,6 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
                      f"enable='gte(t,{_f(start - ENABLE_EPS)})*lt(t,{_f(end - ENABLE_EPS)})'[{out}]")
         cur = out
 
-    first_start = min((c.start for c in layers), default=0.0)
-
     for c in layers:
         m = ws.meta(c.media)
         if c.layout == "pip" and m["kind"] == "audio":
@@ -681,10 +679,7 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         src = lbl("s")
         pos0 = _pip_xy(c) if c.layout == "pip" else ("0", "0")
 
-        # 가장 먼저 나오는 클립이 0초보다 늦게 시작하면, 겹치는 쪽 화면이 늦게 시작해 새 ffmpeg(9.x)에서 멈추는 일이 있어요(CPU 100%).
-        # 그 클립만 앞을 투명한 칸으로 채워 0초부터 시작하게 하면 (화면은 같고) 멈추지 않아요.
-        lead = s > 0.01 and abs(s - first_start) < 1e-6 and kind in ("none", "fade")
-        place = f"tpad=start_duration={_f(s)}:start_mode=add:color=black@0" if lead else f"setpts=PTS+{_tb(s)}"
+        place = f"setpts=PTS+{_tb(s)}"
 
         if kind == "none":
             parts.append(f"[{k}:v]{','.join(chain)},{place}[{src}]")
@@ -781,10 +776,11 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
 
     out = exports / (f"video_editor_{short.format}_{uid8}.mp4" if short else f"video_editor_{uid8}.mp4")
     audio_in = ["-ss", f"{t0:.4f}", "-t", f"{out_len:.4f}", "-i", str(wav.resolve())] if short else ["-i", str(wav.resolve())]
+    # -aac_coder fast: ffmpeg 9.x 의 기본 AAC 인코더는 '앞이 무음인 소리 + 192k'에서 멈춰 버려요 (첫 클립이 0초보다 늦게 시작하면 앞이 무음)
     cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *inputs, *audio_in,
            "-filter_complex", graph, "-map", f"[{out_label}]", "-map", f"{audio_idx}:a",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-t", f"{out_len:.4f}", "-movflags", "+faststart", str(out.resolve())]
+           "-c:a", "aac", "-aac_coder", "fast", "-b:a", "192k", "-t", f"{out_len:.4f}", "-movflags", "+faststart", str(out.resolve())]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports, timeout=EXPORT_TIMEOUT(out_len))
     except subprocess.TimeoutExpired:
