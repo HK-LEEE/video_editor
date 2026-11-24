@@ -42,6 +42,7 @@ VOICE_TARGET_DB = -20.0
 DUCK_MAX_DB = 15.0
 DUCK_LOOKAHEAD_S = 0.08
 FPS = 30
+ENABLE_EPS = 0.002          # 겹쳐 놓는 구간 경계의 소수점 오차(0.0001초)에 한 프레임이 밀리거나 빠지지 않게 하는 여유
 PEAKS_PER_S = 100
 
 
@@ -284,6 +285,8 @@ class Clip(BaseModel):
     # 영상 클립 전용: 이 클립이 시작할 때 아래 화면에서 이 클립으로 넘어가는 효과
     transition: Literal[TRANSITIONS] = "none"
     transition_dur: float = Field(0.5, ge=0.1, le=3.0)
+    # 영상 클립 전용: 전환 때 이 클립 뒤쪽 원본(잘라낸 불량 프레임일 수 있음)을 이어 쓰지 않고 마지막 화면을 붙잡습니다
+    tail_hold: bool = False
     # 영상 클립 전용: pip이면 아래 영상을 가리지 않고 작은 화면으로 위에 겹칩니다 (x, y는 화면 비율의 가운데 위치)
     layout: Literal["full", "pip"] = "full"
     pip_x: float = Field(0.75, ge=0.0, le=1.0)
@@ -431,7 +434,7 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     return peak_limit(mix, SR)
 
 
-VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border", "color"}
+VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "tail_hold", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border", "color"}
 
 
 def project_key(p: Project, ws: Workspace | None = None) -> str:
@@ -477,6 +480,11 @@ def canvas_size(ws: Workspace, p: Project) -> tuple[int, int]:
 
 def _f(x: float) -> str:
     return f"{x:.4f}"
+
+
+def _tb(x: float) -> str:
+    """setpts에 넣는 '초 → 프레임 칸' 값. ffmpeg은 소수를 반올림이 아니라 버려서(8.4333초 = 252.999칸 → 252칸) 한 칸 일찍 시작해 끝에 빈 프레임이 생기므로 0.5를 더해 반올림합니다."""
+    return f"({x:.4f}/TB+0.5)"
 
 
 TEMP_GAIN = 0.2   # 색온도 ±1일 때 빨강·파랑을 ±20% 키우고 줄입니다 (미리보기도 같은 값)
@@ -525,7 +533,7 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         nonlocal cur
         out = lbl("cv")
         parts.append(f"[{cur}][{top}]overlay=x='{x}':y='{y}':format=auto:eof_action=pass:"
-                     f"enable='gte(t,{_f(start)})*lt(t,{_f(end)})'[{out}]")
+                     f"enable='gte(t,{_f(start - ENABLE_EPS)})*lt(t,{_f(end - ENABLE_EPS)})'[{out}]")
         cur = out
 
     for c in layers:
@@ -535,6 +543,8 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         dur = clip_len(c)           # 타임라인에서의 길이 (속도 반영)
         ext = _tail_extension(p, c, layers)
         real = min(ext, max(0.0, (m["duration"] - c.src_out) / c.speed)) if m["kind"] != "audio" else ext
+        if c.tail_hold:
+            real = 0.0
         k, n_in = n_in, n_in + 1
         inputs += ["-ss", f"{c.src_in:.4f}", "-t", _f((dur + real) * c.speed)]   # 원본에서 읽는 길이
         if m["kind"] == "audio":  # 영상 트랙에 소리 파일만 있으면 검은 화면
@@ -564,18 +574,18 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
         pos0 = _pip_xy(c) if c.layout == "pip" else ("0", "0")
 
         if kind == "none":
-            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_tb(s)}[{src}]")
             overlay(src, s, e, *pos0)
         elif kind == "fade":
             chain.append(f"fade=t=in:st=0:d={_f(d)}:alpha=1")
-            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_tb(s)}[{src}]")
             overlay(src, s, e, *pos0)
         elif kind == "dip":
             chain.append(f"fade=t=in:st={_f(d / 2)}:d={_f(d / 2)}:alpha=1")
-            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_f(s)}/TB[{src}]")
+            parts.append(f"[{k}:v]{','.join(chain)},setpts=PTS+{_tb(s)}[{src}]")
             blk = lbl("b")  # 아래 화면이 검게 어두워졌다가 새 화면이 떠오릅니다
             parts.append(f"color=c=black:s={W}x{H}:r={FPS}:d={_f(d)},format=yuva420p,"
-                         f"fade=t=in:st=0:d={_f(d / 2)}:alpha=1,setpts=PTS-STARTPTS+{_f(s)}/TB[{blk}]")
+                         f"fade=t=in:st=0:d={_f(d / 2)}:alpha=1,setpts=PTS-STARTPTS+{_tb(s)}[{blk}]")
             overlay(blk, s, s + d)
             overlay(src, s, e)
         else:  # 가림막(wipe)·밀기(slide): 처음 d초만 따로 떼서 움직이고, 나머지는 그대로 얹습니다
@@ -590,8 +600,8 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
             else:
                 sign = "" if kind == "slideleft" else "-"
                 ox = f"{sign}W*(1-min(1,(t-{_f(s)})/{_f(d)}))"
-            parts.append(f"{head_chain},setpts=PTS+{_f(s)}/TB[{head}]")
-            parts.append(f"[{b}]trim=start={_f(d)},setpts=PTS-STARTPTS+{_f(s + d)}/TB[{tail}]")
+            parts.append(f"{head_chain},setpts=PTS+{_tb(s)}[{head}]")
+            parts.append(f"[{b}]trim=start={_f(d)},setpts=PTS-STARTPTS+{_tb(s + d)}[{tail}]")
             overlay(head, s, s + d, ox)
             overlay(tail, s + d, e)
     return inputs, ";".join(parts) + f";[{cur}]format=yuv420p[vbase]"
@@ -603,8 +613,8 @@ def _pip_xy(c: Clip) -> tuple[str, str]:
             f"max(0,min(main_h-overlay_h,main_h*{c.pip_y:.4f}-overlay_h/2))")
 
 
-def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = None) -> Path:
-    """short를 주면 9:16(1080x1920)로 자르고·구간을 잘라 내보냅니다."""
+def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = None, max_side: int | None = None) -> Path:
+    """short를 주면 9:16(1080x1920)로 자르고·구간을 잘라 내보냅니다. max_side를 주면 긴 변을 그 이하로 줄입니다 (미리보기용)."""
     length = project_length(p)
     if length <= 0:
         raise HTTPException(400, "타임라인이 비어 있습니다.")
@@ -619,6 +629,9 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
         raise HTTPException(409, f"AI 변환이 아직 안 된 클립이 {len(pending)}개 있어요. 속성 패널에서 'AI 변환 만들기'를 먼저 눌러 주세요.")
     wav = mix_file(ws, p)
     W, H = canvas_size(ws, p)
+    if max_side and max(W, H) > max_side:
+        k = max_side / max(W, H)
+        W, H = int(W * k) // 2 * 2, int(H * k) // 2 * 2
 
     # PiP 클립에서도 모양이 안 틀어지게: PiP는 layout이 pip인 클립만 겹쳐지고 나머지는 위 규칙대로 쌓입니다
     inputs, graph = build_video_graph(ws, p, t1 if short else length, W, H)
@@ -712,6 +725,8 @@ def make_router(ws: Workspace) -> APIRouter:
 
     from .ai_routes import add_routes
     add_routes(router, ws, jobs)
+    from .autojoin import add_routes as add_join_routes
+    add_join_routes(router, ws, jobs)
 
     @router.post("/media")
     def upload_media(file: UploadFile = File(...), recorded: bool = Form(False), name: str = Form("")):

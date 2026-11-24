@@ -72,6 +72,7 @@
   .ph button:hover:not(:disabled) { background: var(--panel2); color: var(--ink); }
   .tabs2 { display: flex; height: 100%; align-self: stretch; gap: 2px; }
   .tabs2 button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 0 10px; font-weight: 600; font-size: 12px; }
+  #dock .tabs2 { gap: 0; min-width: 0; } #dock .tabs2 button { padding: 0 7px; white-space: nowrap; } #dock .tabs2 .ic { display: none; }
   .tabs2 button:hover:not(:disabled) { background: transparent; color: var(--ink); }
   .tabs2 button.lit { color: var(--ink); border-bottom-color: var(--accent); background: transparent; }
   .pb { flex: 1; min-height: 0; overflow: auto; padding: 10px; }
@@ -127,6 +128,23 @@
   #dock .pb { padding: 10px; }
   .dockpane { display: none; } .dockpane.on { display: block; }
   #inspector { display: none; padding: 10px; } #inspector.on { display: block; }
+  #joinDlg section { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+  #joinDlg h3 { margin: 0 0 2px; font-size: 14px; }
+  #joinDlg p { margin: 2px 0 8px; }
+  #joinDlg.busy { cursor: progress; }
+  #joinDlg .jit { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; background: var(--panel2); margin-top: 4px; }
+  #joinDlg .jit .n { font-weight: 700; color: var(--accent); width: 1.4em; text-align: center; }
+  #joinDlg .jit .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #joinDlg .jit small, #joinDlg .jwhy { display: block; color: var(--muted); font-size: 11px; white-space: normal; }
+  #joinDlg .jtrim { display: flex; align-items: center; gap: 4px; margin: 0 0 2px 26px; color: var(--muted); font-size: 11px; }
+  #joinDlg .jtrim input { width: 4.6em; }
+  #joinDlg .jseam { border: 1px solid var(--line2); border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
+  #joinDlg .jseam b.k { color: var(--accent); }
+  #joinDlg .jseam .row { margin-top: 4px; }
+  #joinDlg .jseam input[type=number] { width: 4.4em; }
+  #joinDlg video { width: 100%; background: #000; border-radius: 6px; margin-top: 6px; max-height: 320px; }
+  #joinDlg .aimsg { min-height: 1em; white-space: pre-wrap; }
+  #joinDlg .aimsg.err { color: var(--rec); }
   #aiDlg .aihead { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
   #aiDlg .aihead .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #aiDlg section { border-top: 1px solid var(--line); padding: 10px 0 4px; }
@@ -332,6 +350,7 @@
   <button id="addSub" title="T: 재생 위치에 자막 넣기"><svg class="ic"><use href="#i-caption"/></svg><span class="lb">+ 자막</span></button>
   <span class="sep"></span>
   <button id="shortBtn" title="유튜브 쇼츠·인스타 릴스 화면으로 미리보기, 자르기, 따로 내보내기"><svg class="ic"><use href="#i-phone"/></svg><span class="lb">쇼츠/릴스</span></button>
+  <button id="joinBtn" title="여러 영상을 순서대로 이어 붙이면서 앞뒤 불량 프레임 정리, 색·소리 맞춤, 가장 자연스러운 전환을 자동으로"><svg class="ic"><use href="#i-film"/></svg><span class="lb">자동 이어붙이기</span></button>
   <button id="aiBtn" title="자동 자막, 무음·군말 자르기, 장면 나누기, 노이즈 제거, 읽기, 번역 더빙"><svg class="ic"><use href="#i-spark"/></svg><span class="lb">AI 도구</span></button>
   <span id="status"></span>
   <button id="keysBtn" class="ib" title="단축키 (?)"><svg class="ic"><use href="#i-kbd"/></svg></button>
@@ -371,7 +390,7 @@
   </section>
   <div id="hs2" class="split" role="separator" aria-orientation="vertical"></div>
   <section id="dock" class="panel">
-    <div class="ph"><div class="tabs2"><button id="dkTabI" class="lit"><svg class="ic"><use href="#i-sliders"/></svg>속성</button><button id="dkTabA"><svg class="ic"><use href="#i-spark"/></svg>AI 도구</button><button id="dkTabV"><svg class="ic"><use href="#i-wave"/></svg>목소리</button></div><span style="flex:1"></span><button id="dockHide" title="패널 접기"><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
+    <div class="ph"><div class="tabs2"><button id="dkTabI" class="lit"><svg class="ic"><use href="#i-sliders"/></svg>속성</button><button id="dkTabA"><svg class="ic"><use href="#i-spark"/></svg>AI 도구</button><button id="dkTabV"><svg class="ic"><use href="#i-wave"/></svg>목소리</button><button id="dkTabJ"><svg class="ic"><use href="#i-film"/></svg>이어붙이기</button></div><span style="flex:1"></span><button id="dockHide" title="패널 접기"><svg class="ic"><use href="#i-panel-r"/></svg></button></div>
     <div class="pb">
       <div id="inspector" class="dockpane on"></div>
       <div id="voiceDlg" class="dockpane">
@@ -393,6 +412,33 @@
           <textarea id="vTxt" rows="2" style="margin-top:6px">안녕하세요, 이 목소리로 읽어 본 예문이에요. 어떻게 들리나요?</textarea>
           <div class="row" style="margin-top:6px"><button id="vPrep">🔊 다듬어서 예문 들어 보기</button><button id="vSave" class="primary">이 목소리로 등록</button></div>
           <p class="muted" id="vMsg"></p></section>
+      </div>
+      <div id="joinDlg" class="dockpane">
+        <h3>🔗 자동 이어 붙이기</h3>
+        <p class="muted">짧은 영상 여러 개를 순서대로 담으면, 앞뒤의 이상한 프레임(검은 화면·멈춘 화면·깜빡임)을 잘라내고, 이음새마다 색·밝기와 소리 크기를 맞추고, 가장 어색하지 않은 연결(하드컷·디졸브·AI 모핑·암전)을 골라 줘요. 이음새마다 미리 보고 직접 바꿀 수도 있어요.</p>
+        <section><h3>1. 이어 붙일 영상 (위에서부터 순서대로)</h3>
+          <div class="row"><button id="jTl" title="타임라인의 영상 클립을 시간순으로 담아요. 붙이면 그 클립들을 대신해요 (⌘Z로 되돌리기)">타임라인의 영상 담기</button><button id="jUp">📁 파일 올려서 담기</button></div>
+          <div class="row" style="margin-top:6px"><select id="jBin" style="flex:1;min-width:0"></select><button id="jBinAdd">＋ 담기</button></div>
+          <div id="jList"></div>
+          <p class="muted" id="jEmpty">아직 담은 영상이 없어요.</p>
+        </section>
+        <section><h3>2. 다듬기 설정</h3>
+          <label class="check"><input type="checkbox" id="jOTrim" checked> 앞뒤 불량 프레임 자동 정리 (검은·멈춘 화면, 글리치)</label>
+          <label class="check"><input type="checkbox" id="jOColor" checked> 뒤 영상의 색·밝기를 앞 영상 끝에 맞추기</label>
+          <label class="check"><input type="checkbox" id="jOLoud" checked> 영상마다 소리 크기 맞추기 + 이음새에서 소리 겹쳐 섞기</label>
+          <label class="check"><input type="checkbox" id="jOOrder"> 끝 화면과 시작 화면이 닮은 순서로 자동 제안</label>
+          <label class="check"><input type="checkbox" id="jOMorph" checked> 자동 선택에서 AI 모핑도 쓰기</label>
+          <div class="row" style="margin-top:6px"><button id="jPlan" class="primary">분석하기</button></div>
+          <p class="muted" id="jEngine"></p>
+          <p class="aimsg" id="jMsg"></p>
+        </section>
+        <section id="jSeamSec" hidden><h3>3. 이음새 확인·수정</h3>
+          <div id="jSeams"></div>
+          <p class="muted" id="jTotal"></p>
+          <video id="jVid" controls playsinline hidden></video>
+          <div class="row" style="margin-top:8px"><button id="jApply" class="primary">타임라인에 이어 붙이기</button></div>
+          <p class="aimsg" id="jMsg2"></p>
+        </section>
       </div>
       <div id="aiDlg" class="dockpane">
         <div class="aihead"><span class="muted" id="aiTarget"></span><button id="aiClose">속성으로</button></div>
@@ -538,10 +584,10 @@ const newTrack = (kind, o = {}) => ({ id: uid(), kind, name: '', mute: false, so
 const SUB_DEFAULTS = { font: 'Apple SD Gothic Neo', size: 0.06, bold: true, color: '#ffffff', outline_color: '#000000', outline: 0.1,
   bg_color: '#000000', bg_opacity: 0, x: 0.5, y: 0.85, max_width: 0.9, karaoke: false, hl_color: '#ffd400',
   italic: false, shadow: 0, spacing: 0, upper: false, box_pad: 0.25, glow: 0 };
-const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true, speed: 1 };
+const CLIP_DEFAULTS = { transition: 'none', transition_dur: 0.5, layout: 'full', pip_x: 0.75, pip_y: 0.75, pip_w: 0.3, pip_opacity: 1, pip_border: true, speed: 1, tail_hold: false };
 const COLOR_DEFAULT = { brightness: 0, contrast: 1, saturation: 1, temperature: 0 };
 // 소리 믹스에 영향이 없는 클립 항목 (바꿔도 미리듣기를 다시 만들지 않음). 속도·볼륨 키프레임은 소리에 영향이 있으니 들어 있지 않습니다.
-const MIX_IGNORE = ['transition', 'transition_dur', 'layout', 'pip_x', 'pip_y', 'pip_w', 'pip_opacity', 'pip_border', 'color'];
+const MIX_IGNORE = ['transition', 'transition_dur', 'tail_hold', 'layout', 'pip_x', 'pip_y', 'pip_w', 'pip_opacity', 'pip_border', 'color'];
 // 예전에 저장된 프로젝트나 새로 만든 클립에 빠진 항목을 채웁니다
 function normalize(p) {
   p.subtitles ||= []; p.subtitle_lang ||= '';
@@ -2422,12 +2468,13 @@ window.addEventListener('resize', () => applyLayout());
 
 // ---- 오른쪽 패널 탭: 속성 / AI 도구
 function setDock(which) {
-  const ai = which === 'ai', vo = which === 'voice';
-  $('inspector').classList.toggle('on', !ai && !vo); $('aiDlg').classList.toggle('on', ai); $('voiceDlg').classList.toggle('on', vo);
-  $('dkTabI').classList.toggle('lit', !ai && !vo); $('dkTabA').classList.toggle('lit', ai); $('dkTabV').classList.toggle('lit', vo); $('aiBtn').classList.toggle('lit', ai);
+  const ai = which === 'ai', vo = which === 'voice', jo = which === 'join', insp = !ai && !vo && !jo;
+  $('inspector').classList.toggle('on', insp); $('aiDlg').classList.toggle('on', ai); $('voiceDlg').classList.toggle('on', vo); $('joinDlg').classList.toggle('on', jo);
+  $('dkTabI').classList.toggle('lit', insp); $('dkTabA').classList.toggle('lit', ai); $('dkTabV').classList.toggle('lit', vo); $('dkTabJ').classList.toggle('lit', jo);
+  $('aiBtn').classList.toggle('lit', ai); $('joinBtn').classList.toggle('lit', jo);
   if (!ui.dockOpen) { ui.dockOpen = true; applyLayout(); }
 }
-$('dkTabI').onclick = () => setDock('insp'); $('dkTabA').onclick = () => openAi(); $('dkTabV').onclick = () => openVoice();
+$('dkTabI').onclick = () => setDock('insp'); $('dkTabA').onclick = () => openAi(); $('dkTabV').onclick = () => openVoice(); $('dkTabJ').onclick = () => openJoin(); $('joinBtn').onclick = () => openJoin();
 
 // ---- 작업공간 프리셋
 const WS = {
@@ -3107,6 +3154,166 @@ $('aiTtsRate').oninput = (e) => ($('aiTtsRateV').textContent = '×' + (+e.target
 $('aiDubRate').oninput = (e) => ($('aiDubRateV').textContent = '×' + (+e.target.value).toFixed(1));
 for (const [id, v, auto] of [['aiSubLang', 'ko', true], ['aiCutLang', 'ko'], ['aiTtsLang', 'ko'], ['aiDubSrc', 'ko'], ['aiDubDst', 'en'], ['aiTxtLang', 'ko', true], ['aiHlLang', 'ko'], ['aiEmoLang', 'ko']]) $(id).innerHTML = langOpts(v, auto);
 loadChars().then(() => fillAiLists());
+
+// ================================================================ 자동 이어 붙이기
+const J = { items: [], seams: [], plan: null, busy: false, fromClips: null, timer: null };
+const J_KINDS = [['auto', '자동'], ['cut', '하드컷'], ['dissolve', '크로스 디졸브'], ['morph', 'AI 모핑'], ['dip', '암전']];
+const jOpts = () => ({ auto_trim: $('jOTrim').checked, match_color: $('jOColor').checked, match_loudness: $('jOLoud').checked,
+  auto_order: $('jOOrder').checked && !J.plan, allow_morph: $('jOMorph').checked });
+const jReq = () => ({ clips: J.items.map((i) => ({ media: i.media, src_in: i.src_in, src_out: i.src_out })),
+  seams: J.items.slice(1).map((_, k) => J.seams[k] || { transition: 'auto', dur: null, color: true, audio: true }), options: jOpts() });
+const jSay = (m, err, id = 'jMsg') => { const o = $(id); o.textContent = m || ''; o.className = 'aimsg' + (err ? ' err' : ''); };
+async function jGuard(fn, id = 'jMsg') {
+  if (J.busy) return; J.busy = true; $('joinDlg').classList.add('busy');
+  document.querySelectorAll('#joinDlg button').forEach((b) => (b.disabled = true));
+  try { await fn(); } catch (e) { jSay('⚠ ' + (e.message || e), true, id); }
+  finally { J.busy = false; $('joinDlg').classList.remove('busy'); document.querySelectorAll('#joinDlg button').forEach((b) => (b.disabled = false)); renderJoin(); }
+}
+async function openJoin() {
+  setDock('join'); fillJoinBin();
+  try {
+    const s = await (await fetch('/api/autojoin/status')).json();
+    $('jEngine').innerHTML = s.rife ? 'AI 모핑 엔진: RIFE 사용 가능' : `AI 모핑 엔진: ffmpeg 보간으로 대신 동작 중. 더 자연스럽게 하려면 터미널에서 <code>${escapeHtml(s.setup_morph)}</code> 를 한 번 실행하세요.`;
+  } catch {}
+}
+function fillJoinBin() {
+  const vids = Object.values(media).filter((m) => m.kind === 'video').sort((a, b) => a.name.localeCompare(b.name));
+  $('jBin').innerHTML = vids.length ? vids.map((m) => `<option value="${m.id}">${escapeHtml(m.name)} (${fmt(m.duration)})</option>`).join('') : '<option value="">보관함에 영상이 없어요</option>';
+}
+function jReset() { J.plan = null; J.seams = []; $('jSeamSec').hidden = true; $('jVid').hidden = true; $('jVid').removeAttribute('src'); jSay(''); }
+function jAdd(mids, fromClips) {
+  for (const id of mids) if (media[id]) J.items.push({ media: id, src_in: null, src_out: null });
+  if (fromClips !== undefined) J.fromClips = fromClips;
+  jReset(); renderJoin();
+}
+function renderJoin() {
+  $('jEmpty').hidden = J.items.length > 0;
+  const pl = J.plan;
+  $('jList').innerHTML = J.items.map((it, i) => {
+    const m = media[it.media] || { name: '?', duration: 0 }, pc = pl && pl.clips[i];
+    const trim = pc ? `<div class="jtrim">시작 <input type="number" step="0.05" min="0" data-jt="in" data-i="${i}" value="${pc.src_in.toFixed(2)}">초 · 끝 <input type="number" step="0.05" min="0.3" data-jt="out" data-i="${i}" value="${pc.src_out.toFixed(2)}">초
+      ${it.src_in !== null || it.src_out !== null ? `<button data-ja="auto" data-i="${i}" title="자동으로 되돌리기">자동</button>` : ''}</div>
+      ${[...pc.reasons_in.map((r) => '앞: ' + r), ...pc.reasons_out.map((r) => '뒤: ' + r)].length ? `<span class="jwhy" style="margin-left:26px">✂ ${[...pc.reasons_in.map((r) => '앞 ' + r), ...pc.reasons_out.map((r) => '뒤 ' + r)].map(escapeHtml).join(' · ')} 정리</span>` : ''}` : '';
+    return `<div class="jit"><span class="n">${i + 1}</span><span class="t">${escapeHtml(m.name)}<small>${fmt(m.duration)}${pc && pc.gain !== 1 ? ` · 소리 ×${pc.gain.toFixed(2)}` : ''}</small></span>
+      <button data-ja="up" data-i="${i}" ${i ? '' : 'disabled'} title="위로">↑</button><button data-ja="dn" data-i="${i}" ${i < J.items.length - 1 ? '' : 'disabled'} title="아래로">↓</button><button data-ja="rm" data-i="${i}" title="빼기">✕</button></div>${trim}`;
+  }).join('');
+  const seams = $('jSeams');
+  if (!pl || J.items.length < 2) { $('jSeamSec').hidden = !pl; seams.innerHTML = pl ? '<p class="muted">영상이 하나라 이음새가 없어요. 앞뒤 정리만 적용돼요.</p>' : ''; return; }
+  $('jSeamSec').hidden = false;
+  seams.innerHTML = pl.seams.map((s, k) => {
+    const ov = J.seams[k] || { transition: 'auto' };
+    return `<div class="jseam"><b class="k">${k + 1} → ${k + 2}</b> <b>${escapeHtml(s.label)}${s.transition !== 'cut' ? ` ${s.dur.toFixed(2)}초` : ''}</b>
+      <span class="jwhy">${escapeHtml(s.reason)} · 장면 차이 ${s.distance.toFixed(2)}${s.color_on && (s.color.brightness || s.color.saturation !== 1 || s.color.temperature) ? ` · 색 보정(밝기 ${s.color.brightness >= 0 ? '+' : ''}${s.color.brightness.toFixed(2)})` : ''}</span>
+      <div class="row"><select data-js="transition" data-k="${k}">${J_KINDS.map(([v, l]) => `<option value="${v}" ${ov.transition === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <input type="number" step="0.1" min="0.1" max="3" data-js="dur" data-k="${k}" value="${s.dur ? s.dur.toFixed(1) : ''}" placeholder="초" title="전환 길이(초)" ${s.transition === 'cut' ? 'disabled' : ''}>
+        <label class="check"><input type="checkbox" data-js="color" data-k="${k}" ${ov.color === false ? '' : 'checked'}> 색 맞춤</label>
+        <label class="check"><input type="checkbox" data-js="audio" data-k="${k}" ${ov.audio === false ? '' : 'checked'}> 소리 섞기</label>
+        <button data-ja="prev" data-k="${k}" title="이 이음새 앞뒤 1.6초를 실제 결과와 같게 만들어 보여 줘요">▶ 미리보기</button></div></div>`;
+  }).join('');
+  $('jTotal').textContent = `총 ${pl.total.toFixed(1)}초${pl.morph_engine === 'rife' ? ' · AI 모핑: RIFE' : ' · AI 모핑: ffmpeg 보간'}`;
+}
+async function jRunPlan() {
+  const pl = await aiJob('/api/autojoin/plan', jReq(), (m) => jSay(m));
+  if (pl.order.some((v, i) => v !== i)) {                 // 순서를 제안받았으면 그대로 따라 줄을 바꿉니다
+    const ord = pl.order.map((i) => J.items[i]); J.items = ord; J.seams = [];
+    $('jOOrder').checked = false;                          // 한 번만 제안, 이후엔 사용자가 바꾼 순서를 그대로
+    return jRunPlan();
+  }
+  J.plan = pl; renderJoin();
+  const cut = pl.clips.reduce((s, c) => s + (c.reasons_in.length + c.reasons_out.length), 0);
+  jSay(`✅ 분석 끝. ${pl.clips.length}개 영상, 이음새 ${pl.seams.length}곳 (${[...new Set(pl.seams.map((s) => s.label))].join('·') || '없음'})${cut ? `, 불량 프레임 ${cut}곳 정리` : ''}. 이음새마다 미리 보고 바꿔 보세요.`);
+}
+$('jPlan').onclick = () => { if (!J.items.length) return jSay('먼저 영상을 담아 주세요.', true); jGuard(jRunPlan); };
+function jReplanSoon() { jGuard(async () => { await jRunPlan(); }); }
+$('jBinAdd').onclick = () => { const v = $('jBin').value; if (v) jAdd([v], null); };
+$('jUp').onclick = () => { const f = document.createElement('input'); f.type = 'file'; f.multiple = true; f.accept = 'video/*';
+  f.onchange = () => jGuard(async () => { const ms = await uploadFiles([...f.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))); fillJoinBin(); jAdd(ms.filter((m) => m.kind === 'video').map((m) => m.id), null); jSay(''); }); f.click(); };
+$('jTl').onclick = () => {
+  const s = clipById(sel.clip), tr0 = (s && trackOf(s)) || project.tracks.find((t) => t.kind === 'video');
+  const cl = project.clips.filter((c) => trackOf(c) === tr0 && tr0.kind === 'video' && c.layout !== 'pip' && (media[c.media] || {}).kind === 'video').sort((a, b) => a.start - b.start);
+  if (!cl.length) return jSay('타임라인에 영상 클립이 없어요.', true);
+  J.items = []; jAdd(cl.map((c) => c.media), cl.map((c) => c.id));
+  cl.forEach((c, i) => {   // 이미 잘라 둔 구간은 그대로 존중, 통째로 놓은 것만 자동 정리
+    const d = media[c.media].duration;
+    if (c.src_in > 0.02 || c.src_out < d - 0.02) { J.items[i].src_in = c.src_in; J.items[i].src_out = c.src_out; }
+  });
+  renderJoin(); jSay(`타임라인의 영상 ${cl.length}개를 담았어요. [분석하기]를 누르세요.`);
+};
+$('jList').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-ja]'); if (!b || J.busy) return;
+  const i = +b.dataset.i, a = b.dataset.ja;
+  if (a === 'rm') J.items.splice(i, 1);
+  else if (a === 'up' && i > 0) [J.items[i - 1], J.items[i]] = [J.items[i], J.items[i - 1]];
+  else if (a === 'dn' && i < J.items.length - 1) [J.items[i + 1], J.items[i]] = [J.items[i], J.items[i + 1]];
+  else if (a === 'auto') { J.items[i].src_in = null; J.items[i].src_out = null; const had = !!J.plan; if (had) return jReplanSoon(); }
+  const had = !!J.plan; J.seams = []; J.plan = null; renderJoin();
+  if (had && J.items.length) { $('jSeamSec').hidden = true; jReplanSoon(); } else jReset();
+  if (!J.items.length) J.fromClips = null;
+});
+$('jList').addEventListener('change', (e) => {
+  const t = e.target.closest('input[data-jt]'); if (!t || J.busy) return;
+  const i = +t.dataset.i, pc = J.plan.clips[i];
+  J.items[i].src_in = t.dataset.jt === 'in' ? Math.max(0, +t.value) : pc.src_in;
+  J.items[i].src_out = t.dataset.jt === 'out' ? +t.value : pc.src_out;
+  jReplanSoon();
+});
+$('jSeams').addEventListener('change', (e) => {
+  const t = e.target.closest('[data-js]'); if (!t || J.busy) return;
+  const k = +t.dataset.k, o = (J.seams[k] ||= { transition: 'auto', dur: null, color: true, audio: true }), f = t.dataset.js;
+  if (f === 'transition') { o.transition = t.value; o.dur = null; }
+  else if (f === 'dur') o.dur = t.value === '' ? null : +t.value;
+  else o[f] = t.checked;
+  jReplanSoon();
+});
+$('jSeams').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-ja="prev"]'); if (!b || J.busy) return;
+  const k = +b.dataset.k;
+  jGuard(async () => {
+    jSay(`${k + 1} → ${k + 2} 미리보기를 만드는 중…`, false, 'jMsg2');
+    const r = await aiJob('/api/autojoin/preview', { ...jReq(), seam: k }, (m) => jSay(m, false, 'jMsg2'));
+    const v = $('jVid'); v.hidden = false; v.src = r.url + '?t=' + Date.now(); v.muted = false; v.play().catch(() => {});
+    jSay(`▶ ${k + 1} → ${k + 2}: ${r.seam.label}${r.seam.dur ? ' ' + r.seam.dur.toFixed(1) + '초' : ''} — 앞뒤 1.6초`, false, 'jMsg2');
+  }, 'jMsg2');
+});
+// 클립 놓을 트랙: 구간이 비어 있는 트랙, 없으면 새로 만들 트랙(아직 프로젝트에는 안 넣음, _new 표시)
+function jFreeTrack(kind, t0, t1, skip, not = [], name = '') {
+  const free = (t) => !isLocked(t) && !not.includes(t) && !project.clips.some((c) => c.track === t.id && !skip.has(c.id) && c.start < t1 - 1e-3 && end(c) > t0 + 1e-3);
+  const t = name ? project.tracks.find((k) => k.kind === kind && k.name === name && free(k)) : project.tracks.find((k) => k.kind === kind && !k.voice && free(k));
+  if (t) return t;
+  const n = project.tracks.filter((k) => k.kind === kind).length + not.filter((k) => k._new).length + 1;
+  return { ...newTrack(kind, { name: name || (kind === 'video' ? `V${n}` : `A${n}`) }), _new: true };
+}
+$('jApply').onclick = () => jGuard(async () => {
+  if (!J.plan) throw new Error('먼저 [분석하기]를 눌러 주세요.');
+  const skip = new Set();
+  let start = playhead();
+  if (J.fromClips) {
+    const src = J.fromClips.map(clipById).filter(Boolean);
+    src.forEach((c) => { skip.add(c.id); linked(c).forEach((k) => skip.add(k.id)); });
+    if (src.length) start = Math.min(...src.map((c) => c.start));
+  }
+  const t1 = start + J.plan.total + 3;       // 소리가 조금 더 이어지는 여유까지
+  const vt = jFreeTrack('video', start, t1, skip), a1 = jFreeTrack('audio', start, t1, skip), a2 = jFreeTrack('audio', start, t1, skip, [a1], a1.name + ' 2');   // 소리는 겹쳐 섞으려고 두 트랙에 번갈아 놓아요
+  if (a2._new) Object.assign(a2, { duck: a1.duck || 0, volume: a1.volume, mute: a1.mute });
+  jSay('타임라인에 놓을 클립을 만드는 중…', false, 'jMsg2');
+  const res = await aiJob('/api/autojoin/build', { ...jReq(), start, vtrack: vt.id, atracks: [a1.id, a2.id] }, (m) => jSay(m, false, 'jMsg2'));
+  for (const m of Object.values(res.media || {})) media[m.id] = m;
+  renderBin();
+  edit(() => {
+    for (const t of [vt, a1, a2]) if (t._new) {
+      delete t._new;
+      if (t.kind === 'video') project.tracks.splice(project.tracks.map((k) => k.kind).lastIndexOf('video') + 1, 0, t); else project.tracks.push(t);
+    }
+    project.clips = project.clips.filter((c) => !skip.has(c.id));
+    project.clips.push(...res.clips);
+    sel.clip = (res.clips.find((c) => c.track === vt.id) || {}).id || null;
+  });
+  loadPeaksFor(); seek(start); fillJoinBin();
+  jSay(`✅ 타임라인에 이어 붙였어요 (${res.plan.clips.length}개 영상, 이음새 ${res.plan.seams.length}곳, 총 ${res.plan.total.toFixed(1)}초). ⌘Z로 되돌릴 수 있어요.`, false, 'jMsg2');
+  const ids = new Set(res.plan.clips.map((p) => p.media));
+  J.fromClips = res.clips.filter((c) => c.track === vt.id && ids.has(c.media)).map((c) => c.id);   // 다시 분석·적용하면 이번에 놓은 클립을 대신해요
+}, 'jMsg2');
+
 window.__editor = { get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; } };
 
 // ================================================================ 쇼츠·릴스 미리보기 · 리프레임 · 따로 내보내기
