@@ -243,22 +243,23 @@
   body.short #frame { position: absolute; aspect-ratio: auto; }
   body.short #shortSubs { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
   body.short #shortSubs .cue { position: absolute; transform: translate(-50%, -50%); width: max-content; text-align: center; white-space: pre-wrap; line-height: 1.25; paint-order: stroke fill; }
-  body.short #ovl { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1100; color: #fff; font-size: 11px; overflow: hidden; }
+  body.short #ovl { display: block; position: absolute; inset: 0; pointer-events: none; z-index: 1100; color: #fff; font-size: 11px; overflow: hidden; }  /* 실제 글자 크기는 paintOverlay에서 폰 폭에 맞춰요 */
   #ovl .zone { position: absolute; background: repeating-linear-gradient(135deg, rgba(255,60,60,.28) 0 6px, rgba(255,60,60,.12) 6px 12px); }
   #ovl .zone.edge { outline: 1px dashed rgba(255,120,120,.9); outline-offset: -1px; }
   #ovl .ui { position: absolute; text-shadow: 0 1px 3px #000c; }
   #ovl .grad { left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(transparent, rgba(0,0,0,.55)); }
   #ovl .tgrad { left: 0; right: 0; top: 0; height: 12%; background: linear-gradient(rgba(0,0,0,.45), transparent); }
-  #ovl .rail { right: 3%; display: flex; flex-direction: column; align-items: center; gap: 4.2%; }
-  #ovl .rail .b { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
-  #ovl .rail .c { width: 2.6em; height: 2.6em; border-radius: 50%; background: rgba(255,255,255,.2); display: grid; place-items: center; font-size: 15px; }
-  #ovl .disc { width: 2.4em; height: 2.4em; border-radius: 6px; background: linear-gradient(135deg, #8a8, #468); border: 2px solid #fff8; }
-  #ovl .who { left: 3.5%; bottom: 9%; display: flex; align-items: center; gap: 6px; font-weight: 700; }
-  #ovl .av { width: 2.4em; height: 2.4em; border-radius: 50%; background: linear-gradient(135deg, #f7a, #7af); border: 1.5px solid #fff; }
-  #ovl .pill { border: 1px solid #fff9; border-radius: 99px; padding: 1px 8px; font-weight: 600; font-size: 10px; background: rgba(255,255,255,.18); }
-  #ovl .cap { left: 3.5%; bottom: 5.2%; width: 70%; font-size: 11px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #ovl .aud { left: 3.5%; bottom: 2.4%; font-size: 10px; opacity: .9; }
-  #ovl .top { left: 0; right: 0; top: 2.5%; display: flex; justify-content: space-between; padding: 0 5%; font-weight: 700; font-size: 13px; }
+  /* 크기는 폰 화면 폭에 비례(em = 폭의 4%): 아이콘 지름 ≈ 폭의 8.5%, 글자는 작게 — 실제 폰 비율 */
+  #ovl .rail { right: 3%; display: flex; flex-direction: column; align-items: center; gap: 2.4%; }
+  #ovl .rail .b { display: flex; flex-direction: column; align-items: center; gap: .15em; font-size: .62em; line-height: 1.1; }
+  #ovl .rail .c { width: 3.4em; height: 3.4em; border-radius: 50%; background: rgba(255,255,255,.2); display: grid; place-items: center; font-size: 1.6em; line-height: 1; }
+  #ovl .disc { width: 2.1em; height: 2.1em; border-radius: 5px; background: linear-gradient(135deg, #8a8, #468); border: 1.5px solid #fff8; }
+  #ovl .who { left: 3.5%; bottom: 8.2%; display: flex; align-items: center; gap: .5em; font-weight: 700; font-size: .85em; }
+  #ovl .av { width: 2.2em; height: 2.2em; border-radius: 50%; background: linear-gradient(135deg, #f7a, #7af); border: 1px solid #fff; }
+  #ovl .pill { border: 1px solid #fff9; border-radius: 99px; padding: .05em .6em; font-weight: 600; font-size: .8em; background: rgba(255,255,255,.18); }
+  #ovl .cap { left: 3.5%; bottom: 4.6%; width: 72%; font-size: .85em; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ovl .aud { left: 3.5%; bottom: 2.2%; font-size: .75em; opacity: .9; }
+  #ovl .top { left: 0; right: 0; top: 2.5%; display: flex; justify-content: space-between; padding: 0 5%; font-weight: 700; font-size: 1.1em; }
   #ovl .note { position: absolute; left: 0; right: 0; top: 7%; text-align: center; font-size: 9px; color: #fff9; }
   #shortPanel .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   #shortPanel .tabs button { flex: 1; }
@@ -3242,6 +3243,7 @@ let ovlKey = '';
 function paintOverlay(vw, vh) {
   const key = [SHORT.fmt, SHORT.ovl, SHORT.zones, vh].join('|');
   if (key === ovlKey) return; ovlKey = key;
+  $('ovl').style.fontSize = (vw * 0.04).toFixed(2) + 'px';
   const s = shortFmt().safe, reels = SHORT.fmt === 'reels', pc = (v) => (v * 100).toFixed(2) + '%';
   let h = '';
   if (SHORT.zones) {   // 가려지는 영역 (이 밖에는 글자·중요한 것을 두지 마세요)

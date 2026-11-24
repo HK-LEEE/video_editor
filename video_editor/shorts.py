@@ -17,9 +17,9 @@ ASPECT = OUT_W / OUT_H
 # limit: 최대 길이(초). safe: 글자·중요한 것을 두어도 안 가려지는 사각형 (left/right는 x, top/bottom은 y).
 FORMATS: dict[str, dict] = {
     "shorts": {"label": "YouTube 쇼츠", "limit": 180.0,
-               "safe": {"left": 0.05, "right": 0.84, "top": 0.10, "bottom": 0.78}},
+               "safe": {"left": 0.05, "right": 0.88, "top": 0.09, "bottom": 0.80}},
     "reels": {"label": "Instagram 릴스", "limit": 90.0,
-              "safe": {"left": 0.05, "right": 0.83, "top": 0.12, "bottom": 0.74}},
+              "safe": {"left": 0.05, "right": 0.88, "top": 0.10, "bottom": 0.77}},
 }
 
 
