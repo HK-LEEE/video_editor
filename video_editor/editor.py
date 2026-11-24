@@ -40,6 +40,7 @@ TRANSITIONS = ("none", "fade", "dip", "wipeleft", "wiperight", "slideleft", "sli
 ORIGINAL = "original"
 VOICE_TARGET_DB = -20.0
 DUCK_MAX_DB = 15.0
+DUCK_LOOKAHEAD_S = 0.08
 FPS = 30
 PEAKS_PER_S = 100
 
@@ -416,6 +417,8 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     if np.any(voice_key):
         fast = _envelope(voice_key, 0.005, 0.05)
         talking = _envelope((fast > 0.01).astype(np.float32), 0.05, 0.3)
+        k = int(SR * DUCK_LOOKAHEAD_S)     # 말이 시작하기 조금 전부터 음악을 내려서, 첫 마디가 음악에 묻히지 않게
+        talking = np.concatenate([talking[k:], np.zeros(k, dtype=talking.dtype)])
 
     mix = np.zeros(n, dtype=np.float32)
     for t in audio_tracks:
