@@ -10,10 +10,11 @@ from pathlib import Path
 
 import gradio as gr
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
 from video_editor import VoiceSettings, load_audio, load_presets, process, save_wav
+from video_editor import library
 from video_editor.editor import Workspace, make_router
 
 PRESETS = load_presets()
@@ -81,6 +82,7 @@ with gr.Blocks(title="video_editor 보이스 체인저") as demo:
 
 
 WORKSPACE = Workspace(Path(__file__).with_name("workspace"))
+library.warm(WORKSPACE)   # 효과음·음악을 뒤에서 미리 만들어 둡니다
 EDITOR_HTML = Path(__file__).with_name("video_editor") / "static" / "editor.html"
 
 app = FastAPI(title="video_editor")
@@ -90,6 +92,14 @@ app.include_router(make_router(WORKSPACE))
 @app.get("/editor", include_in_schema=False)
 def editor():
     return FileResponse(EDITOR_HTML)
+
+
+@app.get("/editor-static/{name}", include_in_schema=False)   # 편집기 화면 스크립트 (정해 둔 파일만)
+def editor_static(name: str):
+    f = EDITOR_HTML.parent / name
+    if name not in {"shorts_tools.js"} or not f.exists():
+        raise HTTPException(404)
+    return FileResponse(f, media_type="text/javascript")
 
 
 @app.get("/studio", include_in_schema=False)  # 예전 주소

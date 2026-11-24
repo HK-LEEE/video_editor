@@ -4,7 +4,9 @@ setuptools<81  # pyworld가 pkg_resources를 씁니다
 pedalboard>=0.9
 soundfile>=0.12
 pyyaml>=6
+pillow>=10  # 썸네일·엔딩 그리기
 gradio>=4.40
 fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9
+anthropic>=0.40  # 문구 탭(Claude API)에만 씁니다

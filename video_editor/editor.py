@@ -31,7 +31,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from . import ai_voice, characters, shorts
+from . import ai_voice, characters, overlays as ovl_mod, shorts
+from .overlays import Overlay
 from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
@@ -294,6 +295,7 @@ class Clip(BaseModel):
     pip_w: float = Field(0.3, ge=0.05, le=1.0)
     pip_opacity: float = Field(1.0, ge=0.1, le=1.0)
     pip_border: bool = True
+    tpl: str = ""            # 템플릿이 넣은 클립의 표시 (intro·outro·ending). 다시 적용할 때 먼저 지웁니다
 
 
 class Project(BaseModel):
@@ -302,6 +304,7 @@ class Project(BaseModel):
     subtitles: list[Cue] = []
     subtitle_style: SubtitleStyle = SubtitleStyle()
     subtitle_lang: str = ""     # 비우면 모든 자막, 지정하면 그 언어(와 언어 없음) 자막만 입힘
+    overlays: list[Overlay] = []   # 화면 위 글자 (훅 제목·워터마크·자유 글자)
 
 
 def clip_len(c: Clip) -> float:
@@ -434,12 +437,12 @@ def render_audio(ws: Workspace, p: Project, length: float | None = None) -> np.n
     return peak_limit(mix, SR)
 
 
-VIDEO_ONLY_CLIP_FIELDS = {"transition", "transition_dur", "tail_hold", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border", "color"}
+VIDEO_ONLY_CLIP_FIELDS = {"tpl", "transition", "transition_dur", "tail_hold", "layout", "pip_x", "pip_y", "pip_w", "pip_opacity", "pip_border", "color"}
 
 
 def project_key(p: Project, ws: Workspace | None = None) -> str:
     """소리 믹스의 캐시 키. 소리에 영향 없는 자막·전환·PiP 설정은 빼서, 그걸 바꿔도 믹스를 다시 만들지 않습니다."""
-    raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_lang": True,
+    raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_lang": True, "overlays": True,
                                      "clips": {"__all__": VIDEO_ONLY_CLIP_FIELDS}})
     if ws is not None:  # AI 변환이 끝나거나 캐릭터를 고치면 같은 프로젝트라도 소리가 달라집니다
         for c in p.clips:
@@ -639,7 +642,7 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
     out_label = "vbase"
     uid8 = uuid.uuid4().hex[:8]
     exports = ws.root / "exports"
-    ass_name = None
+    ass_name = ov_name = None
     sub_cues, sub_style, sub_w, sub_h, out_len = p.subtitles, p.subtitle_style, W, H, length
     if short:
         graph += ";" + shorts.video_filter(W, H, short, t0, t1)
@@ -653,6 +656,13 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
         (exports / ass_name).write_text(to_ass(sub_cues, sub_style, sub_w, sub_h, p.subtitle_lang, out_len), encoding="utf-8")
         graph += f";[{out_label}]ass=filename={ass_name}[vout]"   # ffmpeg를 exports 폴더에서 돌려서 경로 이스케이프가 필요 없습니다
         out_label = "vout"
+    ov_ass = ovl_mod.to_ass(p.overlays, sub_w, sub_h, t1 if short else length, t0,
+                            shorts.FORMATS[short.format]["safe"] if short and short.safe_subs else None)
+    if ov_ass:   # 훅 제목·워터마크는 자막 위에 입힙니다
+        ov_name = f"ovl_{uid8}.ass"
+        (exports / ov_name).write_text(ov_ass, encoding="utf-8")
+        graph += f";[{out_label}]ass=filename={ov_name}[vov]"
+        out_label = "vov"
 
     out = exports / (f"video_editor_{short.format}_{uid8}.mp4" if short else f"video_editor_{uid8}.mp4")
     audio_in = ["-ss", f"{t0:.4f}", "-t", f"{out_len:.4f}", "-i", str(wav.resolve())] if short else ["-i", str(wav.resolve())]
@@ -663,8 +673,9 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports)
     finally:
-        if ass_name:
-            (exports / ass_name).unlink(missing_ok=True)
+        for name in (ass_name, ov_name):
+            if name:
+                (exports / name).unlink(missing_ok=True)
     if r.returncode != 0:
         raise HTTPException(500, f"내보내기 실패: {r.stderr[-800:]}")
     return out
@@ -727,6 +738,8 @@ def make_router(ws: Workspace) -> APIRouter:
     add_routes(router, ws, jobs)
     from .autojoin import add_routes as add_join_routes
     add_join_routes(router, ws, jobs)
+    from .studio_routes import add_routes as add_studio_routes
+    add_studio_routes(router, ws, jobs)
 
     @router.post("/media")
     def upload_media(file: UploadFile = File(...), recorded: bool = Form(False), name: str = Form("")):
@@ -791,7 +804,7 @@ def make_router(ws: Workspace) -> APIRouter:
     @router.get("/exports/{name}")
     def get_export(name: str):
         p = ws.root / "exports" / Path(name).name
-        if not p.exists() or p.suffix != ".mp4":
+        if not p.exists() or p.suffix not in (".mp4", ".png"):
             raise HTTPException(404)
         return FileResponse(p, filename=p.name)
 
