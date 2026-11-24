@@ -123,13 +123,17 @@ function paintSpaces() {
   $('spOpen').disabled = S.view === S.active;
 }
 async function loadRows() {
-  S.viewActive = S.view === S.active;
+  const view = S.view, keep = S.rowsView === S.view ? S.sel : null;
+  S.viewActive = view === S.active;
+  S.rows = []; S.sel = null; paintRows();        // 다른 워크스페이스를 눌렀을 때 이전 표가 남아 엉뚱한 곳을 열지 않게 먼저 비웁니다
   let r;
-  try { r = await api(`/workspace/spaces/${encodeURIComponent(S.view)}/projects`); } catch (e) { return say(e.message, true); }
+  try { r = await api(`/workspace/spaces/${encodeURIComponent(view)}/projects`); } catch (e) { return say(e.message, true); }
+  if (view !== S.view) return;                   // 그 사이 다른 워크스페이스로 바뀌었으면 늦게 온 답은 버립니다
   S.rows = r.projects;
   S.activeProject = r.active;
   S.rows.forEach((p) => { p.active = p.id === r.active; });
-  if (!S.rows.some((p) => p.id === S.sel)) S.sel = (S.rows.find((p) => p.active) || S.rows[0] || {}).id || null;
+  S.rowsView = view;
+  S.sel = S.rows.some((p) => p.id === keep) ? keep : (S.rows.find((p) => p.active) || S.rows[0] || {}).id || null;
   paintRows();
 }
 function paintRows() {
