@@ -642,6 +642,11 @@ def build_video_graph(ws: Workspace, p: Project, length: float, W: int, H: int) 
                      f"enable='gte(t,{_f(start - ENABLE_EPS)})*lt(t,{_f(end - ENABLE_EPS)})'[{out}]")
         cur = out
 
+    if layers and min(c.start for c in layers) > 0.01:
+        # 첫 영상 클립이 0초보다 늦게 시작하면, 어떤 ffmpeg(overlay)에서는 처음 화면을 기다리다 멈춰요(CPU 100%).
+        # 0초부터 있는 투명한 얇은 층을 먼저 얹어서 겹치기가 바로 시작되게 합니다 (화면은 그대로예요).
+        parts.append(f"color=c=black@0:s={W}x{H}:r={FPS}:d=0.2,format=yuva420p[z0]")
+        overlay("z0", 0.0, 0.2)
     for c in layers:
         m = ws.meta(c.media)
         if c.layout == "pip" and m["kind"] == "audio":
@@ -719,6 +724,11 @@ def _pip_xy(c: Clip) -> tuple[str, str]:
             f"max(0,min(main_h-overlay_h,main_h*{c.pip_y:.4f}-overlay_h/2))")
 
 
+def EXPORT_TIMEOUT(seconds: float) -> float:
+    """내보내기 최대 시간 (영상 길이의 20배, 최소 3분, 최대 2시간). 넘으면 멈춘 것으로 보고 끝내요."""
+    return min(7200.0, max(180.0, seconds * 20))
+
+
 def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = None, max_side: int | None = None) -> Path:
     """short를 주면 9:16(1080x1920)로 자르고·구간을 잘라 내보냅니다. max_side를 주면 긴 변을 그 이하로 줄입니다 (미리보기용)."""
     length = project_length(p)
@@ -774,7 +784,10 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-t", f"{out_len:.4f}", "-movflags", "+faststart", str(out.resolve())]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=exports, timeout=EXPORT_TIMEOUT(out_len))
+    except subprocess.TimeoutExpired:
+        out.unlink(missing_ok=True)
+        raise HTTPException(500, "내보내기가 너무 오래 걸려서 멈췄어요 (ffmpeg가 응답하지 않았어요). 클립 위치를 0초 근처로 옮기거나, 해상도를 낮춰 다시 해 보세요.")
     finally:
         for name in (ass_name, ov_name):
             if name:
