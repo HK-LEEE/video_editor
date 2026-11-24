@@ -187,3 +187,17 @@ def test_batch_apply_builtin_template_to_media(api):
     r = c.post("/api/template/batch", json={"template_id": "builtin-info", "media_ids": [v["id"] for v in vids], "channel": "채널"})
     res = wait(c, r.json()["job"], 120)
     assert res["status"] == "done" and all(x["ok"] for x in res["result"]["results"]), res
+
+
+def test_cue_color_reaches_ass_and_shorts_shift():
+    from video_editor.shorts import shift_cues
+    from video_editor.subtitles import Cue, SubtitleStyle, to_ass
+    cues = [Cue(id="a", start=0, end=2, text="하나"), Cue(id="b", start=2, end=4, text="둘", color="#ffff00")]
+    ass = to_ass(cues, SubtitleStyle(), 1080, 1920)
+    lines = [l for l in ass.splitlines() if l.startswith("Dialogue")]
+    assert "\\c&H00FFFF&" in lines[1] and "\\c&H" not in lines[0]
+    assert shift_cues(cues, 1, 4)[1].color == "#ffff00"
+    # 낱말 강조 자막은 자체 색(강조 색)을 쓰므로 글자색 덮어쓰기를 넣지 않아요
+    assert "\\c&H00FFFF&" not in to_ass(cues, SubtitleStyle(karaoke=True), 1080, 1920)
+    bad = Cue(id="c", start=0, end=1, text="x", color="red")
+    assert "\\c&H" not in to_ass([bad], SubtitleStyle(), 1080, 1920)

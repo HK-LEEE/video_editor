@@ -176,7 +176,7 @@ def test_library_and_templates_are_shared_and_batch_works_across_projects(api):
     sb = c.post("/api/projects", json={"name": "B의 영상", "project": {"tracks": tracks(), "clips": [
         {"id": "c1", "track": "v1", "media": vb["id"], "src_in": 0, "src_out": 2, "start": 0}]}}).json()
     # 템플릿·효과음은 B에서도 보이고, 인트로 미디어도 B에서 읽힘
-    assert [t["name"] for t in c.get("/api/templates").json()] == ["내 채널"]
+    assert [t["name"] for t in c.get("/api/templates").json() if not t["builtin"]] == ["내 채널"]
     assert any(m["id"] == intro["id"] for m in c.get("/api/media").json())
     assert c.get(f"/api/media/{intro['id']}/info").status_code == 200
     lib = c.post("/api/library/ensure").json()

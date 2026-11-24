@@ -233,39 +233,24 @@ function renderBeatTools() {
 }
 
 // ================================================================ 5 화면 글자 (훅 제목·워터마크·자유 글자)
-const OV_DEF = {
-  title: { kind: 'title', text: '', start: 0, end: 3, x: 0.5, y: 0.14, size: 0.062, max_width: 0.9, color: '#ffffff', bg_color: '#e11d48', bg_opacity: 0.92, outline: 0, outline_color: '#000000', bold: true, box_pad: 0.3, opacity: 1, font: 'Apple SD Gothic Neo' },
-  watermark: { kind: 'watermark', text: '@내채널', start: 0, end: null, x: 0.16, y: 0.06, size: 0.028, max_width: 0.5, color: '#ffffff', bg_color: '#000000', bg_opacity: 0, outline: 0.08, outline_color: '#000000', bold: true, box_pad: 0.3, opacity: 0.55, font: 'Apple SD Gothic Neo' },
-  text: { kind: 'text', text: '', start: 0, end: 3, x: 0.5, y: 0.5, size: 0.07, max_width: 0.9, color: '#ffffff', bg_color: '#000000', bg_opacity: 0, outline: 0.12, outline_color: '#000000', bold: true, box_pad: 0.3, opacity: 1, font: 'Apple SD Gothic Neo' },
-};
-function addOverlay(kind, text) {
-  const o = { id: ed.uid(), ...OV_DEF[kind], text: text ?? OV_DEF[kind].text };
-  if (kind !== 'watermark') { o.start = +ed.playhead().toFixed(2) || 0; if (kind === 'title') o.start = 0; o.end = +(o.start + 3).toFixed(2); }
-  ed.edit(() => ed.project.overlays.push(o));
-  return o;
-}
+// 글자는 타임라인의 '그래픽' 줄에 막대로 올라가요. 거기서 끌어 옮기고, 양 끝을 끌어 길이를 줄이고, 미리보기에서 눌러 고르면 속성 패널에서 모양을 고쳐요.
+const OV_NAME = { title: '훅 제목', watermark: '워터마크', text: '글자' };
+function addOverlay(kind, text) { return ed.addOverlay(kind, text); }
 function pageText() {
   const ovs = ed.project.overlays;
   body().innerHTML = `
-    <p class="muted">영상 위에 얹는 글자예요. 맨 위 큰 <b>훅 제목</b>(첫 3초), 구석의 <b>워터마크</b>, 자유 글자. 쇼츠 화면에서는 앱 UI에 가려지지 않게 안전 영역 안으로 자동으로 옮겨요.</p>
+    <p class="muted">영상 위에 얹는 글자예요. 맨 위 큰 <b>훅 제목</b>(첫 3초), 구석의 <b>워터마크</b>, 자유 글자. 모두 타임라인 <b>'그래픽' 줄</b>에 막대로 보여요 — 끌어서 옮기고, 끝을 끌어 길이를 바꾸고, 눌러서 속성 패널에서 모양을 고쳐요. 쇼츠 화면에서는 앱 UI에 가려지지 않게 안전 영역 안으로 자동으로 옮겨요.</p>
     <div class="row"><button id="oT" class="primary">＋ 훅 제목</button><button id="oW">＋ 워터마크</button><button id="oX">＋ 글자</button></div>
     <div id="oList">${ovs.length ? '' : '<p class="muted">아직 없어요. 문구 탭에서 Claude가 제목을 뽑아 줄 수도 있어요.</p>'}</div>`;
   $('#oT').onclick = () => { addOverlay('title', '여기에 훅 제목'); pageText(); };
   $('#oW').onclick = () => { addOverlay('watermark'); pageText(); };
   $('#oX').onclick = () => { addOverlay('text', '글자'); pageText(); };
   for (const o of ovs) {
-    const el = document.createElement('div'); el.className = 'card';
-    el.innerHTML = `<div class="row"><b>${{ title: '훅 제목', watermark: '워터마크', text: '글자' }[o.kind]}</b><span style="flex:1"></span><button data-a="del">✕</button></div>
-      <input type="text" data-f="text" value="${esc(o.text)}" placeholder="글자 내용">
-      <div class="row"><span class="muted">보이는 시간</span><input type="number" data-f="start" step="0.1" min="0" value="${o.start}"> ~ <input type="number" data-f="end" step="0.1" min="0" value="${o.end ?? ''}" placeholder="끝까지"><span class="muted">초</span></div>
-      <div class="row"><span class="muted">위치</span>x<input type="number" data-f="x" step="0.02" min="0" max="1" value="${o.x}">y<input type="number" data-f="y" step="0.02" min="0" max="1" value="${o.y}">크기<input type="number" data-f="size" step="0.005" min="0.01" max="0.3" value="${o.size}"></div>
-      <div class="row"><span class="muted">색</span><input type="color" data-f="color" value="${o.color}"><span class="muted">배경</span><input type="color" data-f="bg_color" value="${o.bg_color}"><input type="number" data-f="bg_opacity" step="0.1" min="0" max="1" value="${o.bg_opacity}" title="배경 진하기 (0=없음)"><span class="muted">투명도</span><input type="number" data-f="opacity" step="0.05" min="0.05" max="1" value="${o.opacity}"></div>`;
+    const el = document.createElement('div'); el.className = 'lib'; el.style.cursor = 'pointer';
+    el.innerHTML = `<span class="chip" style="background:${{ title: '#e11d48', watermark: '#64748b', text: '#0ea5e9' }[o.kind]};color:#fff">${OV_NAME[o.kind]}</span>
+      <span class="n">${esc(o.text || '(빈 글)')}<small>${ed.fmt(o.start)} ~ ${o.end == null ? '끝까지' : ed.fmt(o.end)}${o.tpl ? ' · 템플릿' : ''}</small></span><button data-a="del" title="지우기">✕</button>`;
+    el.onclick = (e) => { if (e.target.closest('[data-a=del]')) return; ed.selectOv(o.id); };
     el.querySelector('[data-a=del]').onclick = () => { ed.edit(() => (ed.project.overlays = ed.project.overlays.filter((x) => x.id !== o.id))); pageText(); };
-    el.querySelectorAll('[data-f]').forEach((inp) => (inp.onchange = () => {
-      const f = inp.dataset.f; let v = inp.value;
-      if (inp.type === 'number') v = v === '' ? (f === 'end' ? null : o[f]) : +v;
-      ed.edit(() => { const t = ed.project.overlays.find((x) => x.id === o.id); if (t) t[f] = v; });
-    }));
     $('#oList').appendChild(el);
   }
 }
@@ -333,7 +318,7 @@ function renderCopy() {
   $('#cOut').querySelectorAll('[data-use]').forEach((b) => (b.onclick = () => {
     const txt = $(`[data-h="${b.dataset.use}"]`).value;
     ed.edit(() => { ed.project.overlays = ed.project.overlays.filter((o) => o.kind !== 'title'); });
-    addOverlay('title', txt); ed.status('훅 제목을 맨 위에 넣었어요 (처음 3초). 글자 탭에서 모양을 고칠 수 있어요.');
+    addOverlay('title', txt); ed.status('훅 제목을 맨 위에 넣었어요 (처음 3초). 타임라인 그래픽 줄에서 길이를 바꾸고, 눌러서 모양을 고칠 수 있어요.');
   }));
   $('#cOut').querySelectorAll('[data-cp]').forEach((b) => (b.onclick = () => {
     const k = b.dataset.cp;
@@ -348,17 +333,30 @@ function renderCopy() {
 }
 
 // ================================================================ 6 템플릿 · 일괄 적용
-const T = { list: [], projects: [], endings: [], sel: new Set(), projSel: new Set(), mediaSel: new Set(), tplSel: null, last: null };
+const T = { list: [], projects: [], endings: [], sel: new Set(), projSel: new Set(), mediaSel: new Set(), tplSel: null, last: null, channel: (() => { try { return localStorage.getItem('voxshift.channel') || ''; } catch { return ''; } })() };
 async function loadTpl() {
   try { [T.list, T.projects, T.endings] = await Promise.all([api('/templates'), api('/projects'), api('/endings').then((r) => r.items)]); } catch (e) { say('mMsg', e.message, true); }
   if (cur === 'tpl') paintTpl();
 }
 const videoMedia = () => Object.values(ed.media).filter((m) => m.kind === 'video' && !m.lib && !m.hidden).sort((a, b) => a.name.localeCompare(b.name));
-const summary = (t) => [t.subtitle_style && '자막 스타일', t.hook && '훅 제목 모양', t.intro && `인트로 ${esc((ed.media[t.intro] || {}).name || '')}`, t.outro && `아웃트로 ${esc((ed.media[t.outro] || {}).name || '')}`,
-  t.watermark && `워터마크 ${esc(t.watermark.text)}`, t.ending && `엔딩 ${esc((T.endings.find((e) => e.id === t.ending) || {}).name || '')}`].filter(Boolean);
+const chn = (tpl) => `<span class="chn" data-tpl="${esc(tpl)}">${esc(tpl.replace('{channel}', T.channel || '내 채널'))}</span>`;   // 채널 이름을 적으면 그 자리만 바로 바뀜
+const summary = (t) => [t.subtitle_style && '자막 스타일', t.hook && '훅 제목 모양', t.intro && `인트로 ${esc((ed.media[t.intro] || {}).name || '')}`, t.intro_card && '인트로 카드', t.outro && `아웃트로 ${esc((ed.media[t.outro] || {}).name || '')}`, t.outro_card && '아웃트로 카드',
+  t.watermark && `워터마크 ${chn(t.watermark.text)}`, t.ending && `엔딩 ${esc((T.endings.find((e) => e.id === t.ending) || {}).name || '')}`, t.ending_card && '엔딩 애니메이션'].filter(Boolean);
+// 템플릿 모양을 작은 세로 화면으로 미리 보여줘요 (훅 제목 바 · 자막 · 워터마크)
+function mock(t) {
+  const st = t.subtitle_style, h = t.hook, w = t.watermark, ic = t.intro_card;
+  const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+  const bg = ic ? `linear-gradient(${ic.bg1},${ic.bg2})` : 'linear-gradient(#2a2f45,#12141f)';
+  return `<div style="position:relative;flex:none;width:54px;height:96px;border-radius:6px;overflow:hidden;background:${bg};border:1px solid var(--line2)">
+    ${h ? `<div style="position:absolute;left:50%;top:${h.y * 100}%;transform:translate(-50%,-50%);white-space:nowrap;font-size:6px;font-weight:700;padding:2px 4px;border-radius:2px;color:${h.color};background:${rgba(h.bg_color, h.bg_opacity)};${h.bg_opacity < 0.1 ? '-webkit-text-stroke:.4px #000;' : ''}">훅 제목</div>` : ''}
+    ${st ? `<div style="position:absolute;left:50%;top:${Math.min(88, st.y * 100)}%;transform:translate(-50%,-50%);white-space:nowrap;font-size:6.5px;font-weight:${st.bold ? 700 : 400};padding:${st.bg_opacity > 0 ? '1.5px 3px' : '0'};color:${st.karaoke ? st.hl_color : st.color};background:${st.bg_opacity > 0 ? rgba(st.bg_color, st.bg_opacity) : 'transparent'};-webkit-text-stroke:${st.outline > 0 ? Math.max(0.3, st.outline * 2.2) + 'px ' + st.outline_color : '0'};paint-order:stroke fill">자막 예시</div>` : ''}
+    ${w ? `<div style="position:absolute;left:${w.x * 100}%;top:${w.y * 100}%;transform:translate(-50%,-50%);white-space:nowrap;font-size:4px;opacity:${w.opacity};color:${w.color}">${chn(w.text)}</div>` : ''}
+  </div>`;
+}
 function pageTpl() {
   body().innerHTML = `
-    <p class="muted">자막 스타일·인트로·아웃트로·워터마크·훅 제목 모양·구독 엔딩을 <b>템플릿</b>으로 저장해 두고, 지금 프로젝트나 여러 프로젝트·영상에 한 번에 입혀요. 다시 입혀도 겹치지 않고 새로 바뀌어요.</p>
+    <p class="muted">자막 스타일·훅 제목·워터마크·인트로·아웃트로·구독 엔딩을 한 벌로 묶은 <b>템플릿</b>이에요. <b>샘플 5종</b>을 눌러 바로 입혀 보세요. 다시 입혀도 겹치지 않고 새로 바뀌고, 입힌 훅 제목·워터마크·엔딩은 모두 타임라인에 막대·클립으로 보여서 따로 고칠 수 있어요.</p>
+    <div class="row"><span class="muted">채널 이름</span><input type="text" id="tChannel" placeholder="워터마크·인트로에 들어가요 (비우면 '내 채널')" value="${esc(T.channel)}" maxlength="30"></div>
     <div id="tList"></div><div id="mMsg" class="tmsg"></div>
     <h3>새 템플릿 저장</h3><div class="card">
       <input type="text" id="nName" placeholder="템플릿 이름 (예: 내 채널 기본)">
@@ -378,23 +376,35 @@ function pageTpl() {
     <div class="row"><button id="bApply" class="primary">선택한 대상에 일괄 적용</button></div>
     <div class="row"><select id="bFmt"><option value="shorts">YouTube 쇼츠 1080×1920</option><option value="reels">Instagram 릴스 1080×1920</option><option value="full">원본 비율</option></select><button id="bExp">선택한 프로젝트 모두 내보내기</button></div>
     <div id="bRes"></div>`;
+  $('#tChannel').oninput = (e) => { T.channel = e.target.value; try { localStorage.setItem('voxshift.channel', T.channel); } catch {} root.querySelectorAll('.chn').forEach((el) => (el.textContent = el.dataset.tpl.replace('{channel}', T.channel || '내 채널'))); };
   $('#nSave').onclick = saveTpl; $('#pSave').onclick = saveProj; $('#bApply').onclick = batchApply; $('#bExp').onclick = batchExport;
   paintTpl(); loadTpl();
 }
 function paintTpl() {
   if (!$('#tList')) return;
-  $('#tList').innerHTML = T.list.length ? '' : '<p class="muted">저장된 템플릿이 없어요.</p>';
-  for (const t of T.list) {
+  $('#tList').innerHTML = '';
+  const section = (title) => { const h = document.createElement('h3'); h.textContent = title; $('#tList').appendChild(h); };
+  const mine = T.list.filter((t) => !t.builtin);
+  if (T.list.some((t) => t.builtin)) section('샘플 템플릿');
+  for (const t of [...T.list.filter((t) => t.builtin), ...(mine.length ? [null] : []), ...mine]) {
+    if (t === null) { section('내 템플릿'); continue; }
     const el = document.createElement('div'); el.className = 'card';
-    el.innerHTML = `<div class="row"><label class="ck" style="flex:1"><input type="radio" name="tsel" value="${t.id}" ${T.tplSel === t.id ? 'checked' : ''}><b>${esc(t.name)}</b><span class="chip">${t.scope === 'global' ? '🌐 공용' : '이 워크스페이스'}</span></label><button data-a="apply" class="primary">지금 프로젝트에 적용</button><button data-a="del">✕</button></div>
-      <div>${summary(t).map((x) => `<span class="chip">${x}</span>`).join('') || '<span class="muted">(비어 있음)</span>'}</div>`;
+    el.innerHTML = `<div style="display:flex;gap:8px">${t.builtin ? mock(t) : ''}<div style="flex:1;min-width:0">
+      <div class="row" style="margin-top:0"><label class="ck" style="flex:1;margin:0"><input type="radio" name="tsel" value="${t.id}" ${T.tplSel === t.id ? 'checked' : ''} title="일괄 적용 대상으로 쓸 템플릿"><b>${esc(t.name)}</b>${t.builtin ? '' : `<span class="chip">${t.scope === 'global' ? '🌐 공용' : '이 워크스페이스'}</span>`}</label>${t.builtin ? '' : '<button data-a="del">✕</button>'}</div>
+      ${t.desc ? `<div class="muted" style="font-size:11px;margin:2px 0">${esc(t.desc)}</div>` : ''}
+      <div>${summary(t).map((x) => `<span class="chip">${x}</span>`).join('') || '<span class="muted">(비어 있음)</span>'}</div>
+      <div class="row"><button data-a="apply" class="primary">지금 프로젝트에 입히기</button></div></div></div>`;
     el.querySelector('input').onchange = () => (T.tplSel = t.id);
     el.querySelector('[data-a=apply]').onclick = async () => {
-      say('mMsg', '입히는 중…');
-      try { const np = await api('/template/apply', { json: { project: ed.projectBody(), template_id: t.id } }); ed.replaceProject((p) => ({ ...p, clips: np.clips, tracks: np.tracks, subtitles: np.subtitles, subtitle_style: np.subtitle_style, overlays: np.overlays })); await ed.loadMedia(); say('mMsg', `'${t.name}'을 입혔어요. ⌘Z로 되돌릴 수 있어요.`); }
-      catch (e) { say('mMsg', e.message, true); }
+      say('mMsg', '입히는 중… (인트로·엔딩 애니메이션을 만들어요, 몇 초 걸려요)');
+      try {
+        const np = await api('/template/apply', { json: { project: ed.projectBody(), template_id: t.id, channel: T.channel.trim(), hook_text: '' } });
+        ed.replaceProject((p) => ({ ...p, clips: np.clips, tracks: np.tracks, subtitles: np.subtitles, subtitle_style: np.subtitle_style, overlays: np.overlays })); await ed.loadMedia();
+        say('mMsg', `'${t.name}'을 입혔어요. 훅 제목·워터마크는 타임라인 그래픽 줄, 인트로·엔딩은 영상 줄에 보여요. 훅 제목 글은 눌러서 고치세요. ⌘Z로 되돌릴 수 있어요.`);
+      } catch (e) { say('mMsg', e.message, true); }
     };
-    el.querySelector('[data-a=del]').onclick = async () => { await api(`/templates/${t.id}`, { method: 'DELETE' }); T.list = T.list.filter((x) => x.id !== t.id); paintTpl(); };
+    const del = el.querySelector('[data-a=del]');
+    if (del) del.onclick = async () => { await api(`/templates/${t.id}`, { method: 'DELETE' }); T.list = T.list.filter((x) => x.id !== t.id); paintTpl(); };
     $('#tList').appendChild(el);
   }
   const vm = videoMedia(), opt = (list, none) => `<option value="">${none}</option>` + list.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
@@ -443,7 +453,7 @@ async function batchApply() {
   if (!T.projSel.size && !T.mediaSel.size) return say('mMsg', '대상 프로젝트나 영상을 하나 이상 골라 주세요.', true);
   $('#bApply').disabled = true; say('mMsg', '일괄 적용 중…');
   try {
-    const r = await job('/template/batch', { template_id: T.tplSel, project_ids: [...T.projSel], media_ids: [...T.mediaSel], name_prefix: '쇼츠 ' });
+    const r = await job('/template/batch', { template_id: T.tplSel, project_ids: [...T.projSel], media_ids: [...T.mediaSel], name_prefix: '쇼츠 ', channel: T.channel.trim() });
     results($('#bRes'), r.results); T.mediaSel.clear(); say('mMsg', `${r.results.filter((x) => x.ok).length}/${r.results.length}개에 적용했어요.`); await loadTpl();
     for (const x of r.results) if (x.ok) T.projSel.add(x.id);
     paintTpl();

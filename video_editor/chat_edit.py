@@ -561,6 +561,12 @@ def apply_ops(project: Project, ops: list[dict], words: list[Word] | None = None
     for a, b in sorted(merged, reverse=True):          # 뒤에서부터 잘라야 앞쪽 시각이 안 밀려요
         ripple_cut(p, a, b)
         res.cut_seconds += b - a
+    if res.short and merged:                            # 쇼츠 구간도 잘라낸 만큼 당겨 줍니다 (지금 시각 → 자른 뒤 시각)
+        def after(t: float) -> float:
+            for a, b in merged:
+                t = t - (b - a) if t >= b else (a if t > a else t)
+            return t
+        res.short = {**res.short, "start": round(after(res.short["start"]), 2), "end": round(after(res.short["end"]), 2)}
     return res
 
 
