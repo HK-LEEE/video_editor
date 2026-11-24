@@ -261,19 +261,19 @@ def test_templates_and_endings_are_per_space_plus_global(api):
     # 공용 템플릿은 전용 엔딩을 못 씀
     assert c.post("/api/templates", json={"name": "나쁨", "ending": a_end["id"], "scope": "global"}).status_code == 400
     b = c.post("/api/workspace/spaces", json={"name": "B"}).json()
-    assert [t["name"] for t in c.get("/api/templates").json()] == ["공용 템플릿"]             # B에는 전용(A)이 안 보이고 공용만
+    assert [t["name"] for t in [t for t in c.get("/api/templates").json() if not t["builtin"]]] == ["공용 템플릿"]             # B에는 전용(A)이 안 보이고 공용만
     assert [e["name"] for e in c.get("/api/endings").json()["items"]] == ["공용 엔딩"]
     b_tpl = c.post("/api/templates", json={"name": "B 템플릿"}).json()
-    assert {t["name"] for t in c.get("/api/templates").json()} == {"공용 템플릿", "B 템플릿"}
+    assert {t["name"] for t in [t for t in c.get("/api/templates").json() if not t["builtin"]]} == {"공용 템플릿", "B 템플릿"}
     c.post("/api/workspace/spaces/open", json={"id": ws.spaces.list()[0]["id"] if ws.spaces.list()[0]["id"] != b["id"] else ws.spaces.list()[1]["id"]})
-    assert {t["name"] for t in c.get("/api/templates").json()} == {"A 템플릿", "공용 템플릿"}
+    assert {t["name"] for t in [t for t in c.get("/api/templates").json() if not t["builtin"]]} == {"A 템플릿", "공용 템플릿"}
     # 범위 바꾸기: 전용 → 공용으로 옮겨 저장
     moved = c.post("/api/templates", json={**a_tpl, "ending": g_end["id"], "scope": "global"}).json()
     assert moved["id"] == a_tpl["id"] and moved["scope"] == "global"
-    assert sorted(t["name"] for t in c.get("/api/templates").json()) == ["A 템플릿", "공용 템플릿"]
-    assert len([t for t in c.get("/api/templates").json() if t["id"] == a_tpl["id"]]) == 1
+    assert sorted(t["name"] for t in [t for t in c.get("/api/templates").json() if not t["builtin"]]) == ["A 템플릿", "공용 템플릿"]
+    assert len([t for t in [t for t in c.get("/api/templates").json() if not t["builtin"]] if t["id"] == a_tpl["id"]]) == 1
     c.delete(f"/api/templates/{g_tpl['id']}")
-    assert [t["name"] for t in c.get("/api/templates").json()] == ["A 템플릿"]
+    assert [t["name"] for t in [t for t in c.get("/api/templates").json() if not t["builtin"]]] == ["A 템플릿"]
     assert b_tpl["scope"] == "space"
 
 
