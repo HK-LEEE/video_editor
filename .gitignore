@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 output/
 .pytest_cache/
+workspace/
+.venv-seedvc/
+third_party/
+.venv-aitools/
+.venv-demucs/
