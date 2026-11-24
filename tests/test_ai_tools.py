@@ -194,7 +194,7 @@ def test_tts_and_translate_and_dub(api, monkeypatch):
     assert r["status"] == "done", r
     m = r["result"]["media"]
     assert r["status"] == "done" and m["duration"] == pytest.approx(2.9, abs=0.1)
-    x, _ = sf.read(tmp / "ws" / "projects" / "기본-프로젝트" / "media" / m["file"], dtype="float32")
+    x, _ = sf.read(tmp / "ws" / "spaces" / "기본-워크스페이스" / "projects" / "기본-프로젝트" / "media" / m["file"], dtype="float32")
     assert rms(x, 0.1, 0.9) > 0.05 and rms(x, 1.2, 1.8) < 0.001      # 자막 사이는 조용
     assert rms(x, 2.0, 2.4) > 0.05                                    # 둘째 자막 구간에 소리
     assert rms(x, 2.5, 2.85) > 0.05                                   # 너무 긴 문장은 1.6배까지만 빨라지고 끝에서 잘림

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from . import beats as beats_mod
 from . import claude_copy, endings as endings_mod, library, shorts, thumbnail
 from .editor import Project, Workspace, _check_id, canvas_size, clip_len, export_video
-from .templates import EndingPreset, ProjectStore, Store, Template, apply_ending, apply_template, project_from_media
+from .templates import EndingPreset, ProjectStore, ScopedStore, Template, apply_ending, apply_template, project_from_media
 
 
 class BeatsReq(BaseModel):
@@ -82,8 +82,8 @@ class BatchExportReq(BaseModel):
 
 def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     # 템플릿·엔딩 프리셋은 모든 프로젝트가 같이 쓰고, '보관한 프로젝트'는 프로젝트마다 따로 둡니다 (목록·일괄 작업은 전체를 봐요)
-    templates = Store(ws.home, "templates", Template)
-    endings = Store(ws.home, "endings", EndingPreset)
+    templates = ScopedStore(ws, "templates", Template)       # 이 워크스페이스 전용 + 전역 공용
+    endings = ScopedStore(ws, "endings", EndingPreset)
 
     def store(w: Workspace = ws) -> ProjectStore:
         return ProjectStore(w.root / "saved")
@@ -214,9 +214,12 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         for mid in (t.intro, t.outro):
             if mid:
                 ws.meta(mid)
-                ws.promote(mid)    # 템플릿은 모든 프로젝트에서 쓰니 인트로·아웃트로 파일도 공유 보관함에 둡니다
-        if t.ending and endings.get(t.ending) is None:
+                ws.promote(mid, "global" if t.scope == "global" else "space")   # 템플릿은 여러 프로젝트에서 쓰니 인트로·아웃트로 파일도 공유 보관함에 둡니다
+        e = endings.get(t.ending) if t.ending else None
+        if t.ending and e is None:
             raise HTTPException(400, "없는 엔딩 프리셋이에요.")
+        if e is not None and t.scope == "global" and e.scope != "global":
+            raise HTTPException(400, "모든 워크스페이스 공용 템플릿에는 공용 엔딩 프리셋만 쓸 수 있어요.")
         return templates.save(t).model_dump()
 
     @router.delete("/templates/{tid}")
@@ -276,7 +279,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     @router.get("/projects")
     def list_projects():
         out = []
-        for info in ws.projects.list():
+        for info in ws.projects.list():       # 열려 있는 워크스페이스 안의 모든 프로젝트
             w = ws.at(info["id"])
             for d in store(w).list():
                 out.append({**d, "workspace": info["id"], "workspace_name": info["name"], "current": info["id"] == ws.pid})

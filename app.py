@@ -98,7 +98,9 @@ def editor():
     """열린 프로젝트(이름·id·마지막 편집 상태)를 화면에 같이 실어 보냅니다 — 브라우저가 프로젝트별로 편집 상태를 따로 기억하게요."""
     pr = WORKSPACE.projects
     info = pr.info(WORKSPACE.pid)
-    ws_info = {"id": info["id"], "name": info["name"], "legacy": info.get("origin") == "migrated",
+    sinfo = WORKSPACE.spaces.info(WORKSPACE.sid)
+    ws_info = {"id": info["id"], "name": info["name"], "space": sinfo["id"], "space_name": sinfo["name"],
+               "legacy": info.get("origin") == "migrated", "legacy2": sinfo.get("origin") == "migrated",
                "timeline": pr.load_timeline(info["id"])}
     tag = "<script>window.__WS=" + json.dumps(ws_info, ensure_ascii=False).replace("<", "\\u003c") + ";</script>"
     html = EDITOR_HTML.read_text(encoding="utf-8").replace("</head>", tag + "</head>", 1)

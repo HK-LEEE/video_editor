@@ -55,6 +55,7 @@ class Template(BaseModel):
     outro_transition: str = "fade"
     watermark: Watermark | None = None
     ending: str | None = None                # 엔딩 프리셋 id
+    scope: str = ""                          # "space"=이 워크스페이스 전용 (기본), "global"=모든 워크스페이스에 공용
 
 
 class EndingPreset(BaseModel):
@@ -67,6 +68,7 @@ class EndingPreset(BaseModel):
     bg1: str = "#1b1030"
     bg2: str = "#3a1c5e"
     duration: float = Field(3.0, ge=1.5, le=8.0)
+    scope: str = ""                          # "space" | "global" (템플릿과 같아요)
 
 
 # ---------------------------------------------------------------- 저장소 (json 파일)
@@ -95,6 +97,42 @@ class Store:
 
     def delete(self, id_: str) -> None:
         self.path.write_text(json.dumps([x.model_dump() for x in self.all() if x.id != id_], ensure_ascii=False))
+
+
+class ScopedStore:
+    """템플릿·엔딩 프리셋 저장소: 이 워크스페이스 전용(채널별 브랜딩)과 전역 공용을 함께 보여 줍니다.
+    저장할 때 scope가 'global'이면 전역 파일에, 아니면 이 워크스페이스에 둬요 (같은 id가 다른 쪽에 있으면 옮겨져요)."""
+
+    def __init__(self, ws, name: str, model):
+        self.ws, self.name, self.model = ws, name, model
+
+    def _store(self, scope: str) -> Store:
+        return Store(self.ws.home if scope == "global" else self.ws.space_dir, self.name, self.model)
+
+    def all(self) -> list:
+        out = []
+        for scope in ("space", "global"):
+            for x in self._store(scope).all():
+                x.scope = scope
+                out.append(x)
+        return out
+
+    def get(self, id_: str):
+        return next((x for x in self.all() if x.id == id_), None)
+
+    def save(self, item):
+        scope = "global" if item.scope == "global" else "space"
+        if item.id:
+            other = self._store("space" if scope == "global" else "global")
+            if other.get(item.id):
+                other.delete(item.id)
+        item.scope = scope
+        return self._store(scope).save(item)
+
+    def delete(self, id_: str) -> None:
+        for scope in ("space", "global"):
+            if self._store(scope).get(id_):
+                self._store(scope).delete(id_)
 
 
 class ProjectStore:

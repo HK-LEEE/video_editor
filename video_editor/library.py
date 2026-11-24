@@ -34,7 +34,7 @@ def _specs() -> list[dict]:
 
 def ensure_item(ws: Workspace, spec: dict) -> dict:
     mid = lib_id(spec["key"])
-    meta_p = ws.shared / f"{mid}.json"        # 효과음·음악은 모든 프로젝트가 같이 쓰는 공유 보관함에 둡니다
+    meta_p = ws.global_shared / f"{mid}.json"   # 기본 효과음·음악은 모든 워크스페이스가 같이 쓰는 전역 보관함에 둡니다
     if meta_p.exists():
         return json.loads(meta_p.read_text())
     with _lock:
@@ -42,7 +42,7 @@ def ensure_item(ws: Workspace, spec: dict) -> dict:
             return json.loads(meta_p.read_text())
         x = spec["fn"]()
         file = f"{mid}.wav"
-        sf.write(ws.shared / file, x, SR, subtype="PCM_16")
+        sf.write(ws.global_shared / file, x, SR, subtype="PCM_16")
         meta = {"id": mid, "name": spec["name"], "file": file, "recorded": False, "kind": "audio", "duration": round(x.size / SR, 4),
                 "has_video": False, "has_audio": True, "width": 0, "height": 0,
                 "lib": spec["kind"], "key": spec["key"], "tags": spec["tags"], "mood": spec["mood"], "bpm": spec["bpm"], "user": False}
@@ -66,11 +66,11 @@ def catalog(ws: Workspace) -> list[dict]:
     items = []
     for s in _specs():
         mid = lib_id(s["key"])
-        p = ws.shared / f"{mid}.json"
+        p = ws.global_shared / f"{mid}.json"
         meta = json.loads(p.read_text()) if p.exists() else None
         items.append({"id": mid, "key": s["key"], "kind": s["kind"], "name": s["name"], "tags": s["tags"], "mood": s["mood"], "bpm": s["bpm"],
                       "duration": meta["duration"] if meta else None, "ready": meta is not None, "user": False})
-    for p in sorted(ws.shared.glob("*.json")):
+    for p in sorted([*ws.global_shared.glob("*.json"), *ws.shared.glob("*.json")]):    # 전역 + 이 워크스페이스에 올린 것
         m = json.loads(p.read_text())
         if m.get("lib") and m.get("user"):
             items.append({"id": m["id"], "key": m.get("key", ""), "kind": m["lib"], "name": m["name"], "tags": m.get("tags", []),

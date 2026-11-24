@@ -328,14 +328,14 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     def create_character(b: characters.Character):
         check_character(b)
         if b.ref:
-            ws.promote(b.ref)       # 캐릭터는 모든 프로젝트가 쓰니 샘플 목소리 파일도 공유 보관함에 둡니다
+            ws.promote(b.ref, "global")       # 캐릭터는 모든 프로젝트가 쓰니 샘플 목소리 파일도 공유 보관함에 둡니다
         return characters.create(ws.home, b).model_dump()
 
     @router.put("/characters/{cid}")
     def update_character(cid: str, b: characters.Character):
         _check_id(cid), check_character(b)
         if b.ref:
-            ws.promote(b.ref)
+            ws.promote(b.ref, "global")
         ch = characters.update(ws.home, cid, b)
         if ch is None:
             raise HTTPException(404, "보이스 캐릭터를 찾을 수 없어요.")

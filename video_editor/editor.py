@@ -50,16 +50,37 @@ PEAKS_PER_S = 100
 # ================================================================ 보관함
 
 class Workspace:
-    """작업 폴더. 프로젝트별 파일(media·cache·exports…)은 `root`(지금 열린 프로젝트 폴더) 아래에 있고,
-    모든 프로젝트가 같이 쓰는 것(캐릭터·템플릿·엔딩 프리셋·설정, 효과음·음악 보관함)은 `home` 아래에 있습니다.
-    `at(프로젝트 id)`는 그 프로젝트에 고정된 같은 작업 폴더를 돌려줘요 (여러 프로젝트에 걸친 일괄 작업용)."""
+    """작업 폴더: 워크스페이스 > 프로젝트. 프로젝트별 파일(media·cache·exports…)은 `root`(지금 열린 프로젝트 폴더) 아래에,
+    워크스페이스 전용 자료(템플릿·엔딩 프리셋, 내가 올린 효과음·음악)는 `space_dir` 아래에,
+    모든 워크스페이스가 같이 쓰는 것(보이스 캐릭터·설정, 기본 효과음·음악, 전역 공용 템플릿·엔딩)은 `home` 아래에 있습니다.
+    `at(프로젝트 id)`는 그 프로젝트에 고정된 같은 작업 폴더를 돌려줘요 (같은 워크스페이스 안의 일괄 작업용)."""
 
-    def __init__(self, home: Path, project: str | None = None, _projects: workspaces.Projects | None = None):
+    def __init__(self, home: Path, project: str | None = None, _spaces: workspaces.Spaces | None = None, space: str | None = None):
         self.home = Path(home)
-        self.projects = _projects or workspaces.Projects(self.home)
+        self.spaces = _spaces or workspaces.Spaces(self.home)
+        self._sid = space
         self._pid = project
-        self.shared = self.home / "library" / "media"        # 모든 프로젝트가 쓰는 미디어 (효과음·음악, 템플릿 인트로·아웃트로, 캐릭터 샘플)
-        self.shared.mkdir(parents=True, exist_ok=True)
+        self.global_shared = self.home / "library" / "media"   # 전역 공용 미디어 (기본 효과음·음악, 캐릭터 샘플, 전역 템플릿 인트로·아웃트로)
+        self.global_shared.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def sid(self) -> str:
+        return self._sid or self.spaces.active
+
+    @property
+    def space_dir(self) -> Path:
+        return self.spaces.dir(self.sid)
+
+    @property
+    def shared(self) -> Path:
+        """이 워크스페이스 전용 미디어 보관함 (내가 올린 효과음·음악, 전용 템플릿 인트로·아웃트로)."""
+        p = self.space_dir / "library" / "media"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def projects(self) -> workspaces.Projects:
+        return self.spaces.projects(self.sid)
 
     @property
     def pid(self) -> str:
@@ -70,16 +91,19 @@ class Workspace:
         return self.projects.dir(self.pid)
 
     def at(self, pid: str) -> "Workspace":
+        """같은 워크스페이스 안의 다른 프로젝트에 고정된 작업 폴더."""
         self.projects.info(pid)
-        return Workspace(self.home, pid, self.projects)
+        return Workspace(self.home, pid, self.spaces, self.sid)
+
+    def _dirs(self) -> list[Path]:
+        return [self.root / "media", self.shared, self.global_shared]    # 찾는 순서: 프로젝트 → 워크스페이스 → 전역
 
     def meta_path(self, mid: str) -> Path:
         _check_id(mid)
-        p = self.root / "media" / f"{mid}.json"
-        if p.exists():
-            return p
-        s = self.shared / f"{mid}.json"
-        return s if s.exists() else p
+        for d in self._dirs():
+            if (d / f"{mid}.json").exists():
+                return d / f"{mid}.json"
+        return self.root / "media" / f"{mid}.json"
 
     def meta(self, mid: str) -> dict:
         p = self.meta_path(mid)
@@ -91,9 +115,9 @@ class Workspace:
         return self.meta_path(mid).parent / self.meta(mid)["file"]
 
     def all_meta(self) -> list[dict]:
-        """이 프로젝트의 미디어 + 공유 미디어 (같은 id면 프로젝트 것이 우선)."""
+        """이 프로젝트의 미디어 + 워크스페이스·전역 공유 미디어 (같은 id면 프로젝트 것이 우선)."""
         out = {}
-        for d in (self.shared, self.root / "media"):
+        for d in reversed(self._dirs()):
             for p in d.glob("*.json"):
                 try:
                     m = json.loads(p.read_text())
@@ -102,9 +126,10 @@ class Workspace:
                 out[m["id"]] = m
         return list(out.values())
 
-    def promote(self, mid: str) -> bool:
-        """이 프로젝트의 미디어를 공유 보관함에도 복사합니다 (다른 프로젝트에서도 쓰는 템플릿·캐릭터가 가리키는 파일)."""
-        return workspaces.promote_media(self.root / "media", self.shared, mid)
+    def promote(self, mid: str, scope: str = "space") -> bool:
+        """이 프로젝트의 미디어를 공유 보관함에도 복사합니다 (원본은 그대로). scope: 'space'=이 워크스페이스, 'global'=모든 워크스페이스.
+        다른 프로젝트에서도 쓰는 템플릿·캐릭터가 가리키는 파일이에요."""
+        return workspaces.promote_media(self.root / "media", self.global_shared if scope == "global" else self.shared, mid)
 
 
 def _check_id(x: str) -> None:

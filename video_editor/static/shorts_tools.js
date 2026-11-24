@@ -368,6 +368,7 @@ function pageTpl() {
       <div class="row"><span class="muted">아웃트로</span><select id="nOutro"></select></div>
       <div class="row"><span class="muted">워터마크</span><input type="text" id="nWm" placeholder="비우면 없음 (예: @내채널)"></div>
       <div class="row"><span class="muted">엔딩</span><select id="nEnd"></select></div>
+      <label class="ck"><input type="checkbox" id="nGlobal"> 모든 워크스페이스 공용 (끄면 '${esc(ed.workspace.space_name || '이')}' 워크스페이스 전용)</label>
       <div class="row"><button id="nSave" class="primary">템플릿 저장</button></div></div>
     <h3>일괄 적용 대상</h3>
     <p class="muted">여러 프로젝트에 흩어진 보관본도 한꺼번에 골라 입힐 수 있어요. ① 보관한 프로젝트를 고르거나 ② 보관함 영상을 골라 한 번에 새 프로젝트로 만들어요.</p>
@@ -385,7 +386,7 @@ function paintTpl() {
   $('#tList').innerHTML = T.list.length ? '' : '<p class="muted">저장된 템플릿이 없어요.</p>';
   for (const t of T.list) {
     const el = document.createElement('div'); el.className = 'card';
-    el.innerHTML = `<div class="row"><label class="ck" style="flex:1"><input type="radio" name="tsel" value="${t.id}" ${T.tplSel === t.id ? 'checked' : ''}><b>${esc(t.name)}</b></label><button data-a="apply" class="primary">지금 프로젝트에 적용</button><button data-a="del">✕</button></div>
+    el.innerHTML = `<div class="row"><label class="ck" style="flex:1"><input type="radio" name="tsel" value="${t.id}" ${T.tplSel === t.id ? 'checked' : ''}><b>${esc(t.name)}</b><span class="chip">${t.scope === 'global' ? '🌐 공용' : '이 워크스페이스'}</span></label><button data-a="apply" class="primary">지금 프로젝트에 적용</button><button data-a="del">✕</button></div>
       <div>${summary(t).map((x) => `<span class="chip">${x}</span>`).join('') || '<span class="muted">(비어 있음)</span>'}</div>`;
     el.querySelector('input').onchange = () => (T.tplSel = t.id);
     el.querySelector('[data-a=apply]').onclick = async () => {
@@ -419,7 +420,7 @@ function paintTpl() {
 }
 async function saveTpl() {
   const name = $('#nName').value.trim(); if (!name) return say('mMsg', '템플릿 이름을 적어 주세요.', true);
-  const t = { name, intro: $('#nIntro').value || null, outro: $('#nOutro').value || null, ending: $('#nEnd').value || null };
+  const t = { name, intro: $('#nIntro').value || null, outro: $('#nOutro').value || null, ending: $('#nEnd').value || null, scope: $('#nGlobal').checked ? 'global' : 'space' };
   if ($('#nSub').checked) t.subtitle_style = ed.project.subtitle_style;
   const wm = $('#nWm').value.trim();
   if (wm) { const w = ed.project.overlays.find((o) => o.kind === 'watermark'); t.watermark = w ? { text: wm, x: w.x, y: w.y, size: w.size, opacity: w.opacity, color: w.color } : { text: wm }; }
@@ -471,10 +472,11 @@ function paintEnd() {
       <div class="row"><span class="muted">작은 글자</span><input type="text" id="eSub" value="${esc(d.sub)}" maxlength="30"></div>
       <div class="row"><span class="muted">포인트 색</span><input type="color" id="eAcc" value="${d.accent}"><span class="muted">배경</span><input type="color" id="eB1" value="${d.bg1}"><input type="color" id="eB2" value="${d.bg2}"><span class="muted">길이</span><input type="number" id="eDur" step="0.5" min="1.5" max="8" value="${d.duration}"><span class="muted">초</span></div>
       <div class="row"><button id="ePrev">▶ 미리보기</button><input type="text" id="eName" placeholder="프리셋 이름" value="${esc(d.name)}"><button id="eSave" class="primary">프리셋 저장</button></div>
+      <label class="ck"><input type="checkbox" id="eGlobal" ${d.scope === 'global' ? 'checked' : ''}> 모든 워크스페이스 공용</label>
       <div id="ePrevBox"></div></div>
     <div id="eMsg" class="tmsg"></div>
     <h3>저장한 엔딩</h3><div id="eList">${E.items.length ? '' : '<p class="muted">아직 없어요.</p>'}</div>`;
-  const read = () => { d.kind = $('#eKind').value; d.text = $('#eText').value; d.sub = $('#eSub').value; d.accent = $('#eAcc').value; d.bg1 = $('#eB1').value; d.bg2 = $('#eB2').value; d.duration = +$('#eDur').value || 3; d.name = $('#eName').value; };
+  const read = () => { d.kind = $('#eKind').value; d.text = $('#eText').value; d.sub = $('#eSub').value; d.accent = $('#eAcc').value; d.bg1 = $('#eB1').value; d.bg2 = $('#eB2').value; d.duration = +$('#eDur').value || 3; d.name = $('#eName').value; d.scope = $('#eGlobal').checked ? 'global' : 'space'; };
   root.querySelectorAll('#eBox input, #eBox select').forEach((i) => i.addEventListener('change', read));
   $('#ePrev').onclick = async () => {
     read(); say('eMsg', '미리보기를 만드는 중…');
@@ -487,7 +489,7 @@ function paintEnd() {
   };
   for (const e of E.items) {
     const el = document.createElement('div'); el.className = 'card';
-    el.innerHTML = `<div class="row"><b style="flex:1">${esc(e.name)}</b><span class="muted">${esc(E.kinds[e.kind] || e.kind)} · ${e.duration}초</span></div><div class="row"><button data-a="add" class="primary">영상 끝에 붙이기</button><button data-a="edit">불러와 고치기</button><button data-a="del">✕</button></div>`;
+    el.innerHTML = `<div class="row"><b style="flex:1">${esc(e.name)}</b><span class="muted">${e.scope === 'global' ? '🌐 공용 · ' : ''}${esc(E.kinds[e.kind] || e.kind)} · ${e.duration}초</span></div><div class="row"><button data-a="add" class="primary">영상 끝에 붙이기</button><button data-a="edit">불러와 고치기</button><button data-a="del">✕</button></div>`;
     el.querySelector('[data-a=add]').onclick = async () => {
       say('eMsg', '엔딩을 만들어 붙이는 중…');
       try { const np = await api('/endings/apply', { json: { project: ed.projectBody(), ending_id: e.id } }); ed.replaceProject((p) => ({ ...p, clips: np.clips, tracks: np.tracks })); await ed.loadMedia(); say('eMsg', `'${e.name}'을 영상 끝에 붙였어요. ⌘Z로 되돌릴 수 있어요.`); }

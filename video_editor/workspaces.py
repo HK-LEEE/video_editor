@@ -1,23 +1,23 @@
-"""작업 폴더(workspace)를 프로젝트별로 나눠 두는 곳.
+"""작업 폴더(workspace)를 '워크스페이스 > 프로젝트'로 나눠 두는 곳. (워크스페이스 = 채널·클라이언트·시리즈 같은 큰 묶음)
 
     workspace/
-      workspace.json                 지금 열린 프로젝트 · 최근 목록
-      characters.json  templates.json  endings.json  settings.json     ← 모든 프로젝트가 같이 쓰는 것
-      library/media/                 효과음·음악 보관함, 템플릿 인트로·아웃트로, 캐릭터 샘플 목소리 (공유 미디어)
-      projects/<프로젝트>/
-        project.json                 이름 · 만든 때 · 고친 때
-        timeline.json                마지막 편집 상태 (타임라인 · 화면 설정)
-        media/  cache/  exports/     이 프로젝트의 파일 · AI 결과 · 내보낸 영상
-        subtitles/                   내보낼 때 같이 남기는 SRT
-        saved/                       '보관한 프로젝트' (템플릿 일괄 적용·일괄 내보내기 대상)
-      _trash/                        지운 프로젝트 (폴더째 옮겨 두기만 해요)
+      workspace.json                 지금 열린 워크스페이스 · 최근 목록
+      characters.json  settings.json 전역: 보이스 캐릭터(목소리)·설정. AI 모델·가상환경(.venv-*)은 작업 폴더 밖이라 원래 전역
+      templates.json  endings.json   전역 공용 템플릿·엔딩 프리셋 (모든 워크스페이스에 같이 보여요)
+      library/media/                 전역 공용 미디어: 기본 효과음·음악, 전역 템플릿 인트로·아웃트로, 캐릭터 샘플 목소리
+      spaces/<워크스페이스>/
+        space.json                   이름 · 만든 때 · 열린 프로젝트 · 최근 목록
+        templates.json endings.json  이 워크스페이스 전용 템플릿·엔딩 프리셋(워터마크 포함) — 채널별 브랜딩
+        library/media/               이 워크스페이스 전용 미디어: 내가 올린 효과음·음악, 전용 템플릿의 인트로·아웃트로
+        projects/<프로젝트>/
+          project.json  timeline.json  media/  cache/  exports/  subtitles/  saved/
+      _trash/                        지운 워크스페이스 (폴더째 옮겨 두기만 해요). 지운 프로젝트는 spaces/<워크스페이스>/_trash/
       _migration/                    예전 구조에서 옮길 때의 기록 · 메타데이터 백업
 
-AI 모델·가상환경(.venv-*)은 작업 폴더 밖(저장소 폴더)에 있어서 그대로 공유됩니다.
-
-예전(프로젝트 구분 없이 workspace/media, cache, exports, projects/*.json)에서 처음 켜면 `migrate_legacy`가
-기존 내용을 '기존 작업' 프로젝트로 옮깁니다. 파일은 같은 폴더 안에서 이름만 바꿔 옮기고(복사·삭제 없음),
-옮기기 전에 목록과 메타데이터 백업을 남기며, 옮긴 뒤 개수·크기를 대조합니다. 여러 번 실행해도 안전해요.
+옛 구조에서는 처음 켤 때 자동으로 옮깁니다 (둘 다 파일을 복사·삭제하지 않고 같은 디스크 안에서 이름만 바꿔 옮기며,
+백업·목록·개수/크기 대조 기록을 남기고, 중간에 멈춰도 이어서 끝나며, 여러 번 실행해도 안전해요):
+  1) 프로젝트 구분 없던 구조(workspace/media·cache·exports·projects/*.json) → '기존 작업' 프로젝트
+  2) workspace/projects/<프로젝트> → '기본 워크스페이스'의 projects/
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from fastapi import HTTPException
 SUBDIRS = ("media", "cache", "exports", "subtitles", "saved")
 LEGACY_NAME = "기존 작업"
 FRESH_NAME = "기본 프로젝트"
+DEFAULT_SPACE = "기본 워크스페이스"
 SHARED_FILES = ("characters.json", "templates.json", "endings.json", "settings.json")
 _ID_OK = re.compile(r"^[0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-]{1,48}$")
 _lock = threading.RLock()
@@ -76,15 +77,14 @@ def _dir_stats(p: Path) -> tuple[int, int]:
 
 
 class Projects:
-    """프로젝트 목록과 '지금 열린 프로젝트'."""
+    """한 워크스페이스 안의 프로젝트 목록과 '지금 열린 프로젝트' (space.json에 기억해요)."""
 
-    def __init__(self, home: Path):
-        self.home = Path(home)
+    def __init__(self, space_dir: Path):
+        self.home = Path(space_dir)
         self.base = self.home / "projects"
-        self.reg = self.home / "workspace.json"
+        self.reg = self.home / "space.json"
         self.base.mkdir(parents=True, exist_ok=True)
         with _lock:
-            migrate_legacy(self.home)
             if not self.list():
                 self._create(FRESH_NAME, origin="fresh")
             if self.active not in {p["id"] for p in self.list()}:
@@ -112,7 +112,7 @@ class Projects:
     def _set_active(self, pid: str) -> None:
         d = self._reg()
         recent = [x for x in d.get("recent", []) if x != pid and self.exists(x)]
-        _write_json(self.reg, {"version": 2, "active": pid, "recent": [pid, *recent][:12]})
+        _write_json(self.reg, {**d, "active": pid, "recent": [pid, *recent][:12]})
 
     def info(self, pid: str) -> dict:
         d = _read_json(self.dir(pid) / "project.json", None)
@@ -294,11 +294,26 @@ def migrate_legacy(home: Path) -> dict | None:
         projects.mkdir(exist_ok=True)
 
         # 1) 옮길 프로젝트 폴더 (이미 만들다 만 게 있으면 그걸 이어서 씁니다)
-        pr = Projects.__new__(Projects)
-        pr.home, pr.base, pr.reg = home, projects, home / "workspace.json"
-        target = next((p for p in pr.list() if p.get("origin") == "migrated"), None) or pr._create(LEGACY_NAME, origin="migrated")
+        def hack(base: Path, reg: Path) -> Projects:
+            x = Projects.__new__(Projects)
+            x.home, x.base, x.reg = base.parent, base, reg
+            return x
+
+        # 이미 워크스페이스 구조로 옮겨진 뒤에 예전 파일이 다시 생겼다면(옛 버전을 잠깐 썼을 때 등) 그 '기존 작업'에 합칩니다
+        pr = target = None
+        for base, reg in [(projects, home / "workspace.json"), *[(d / "projects", d / "space.json") for d in sorted((home / "spaces").glob("*"))
+                                                                 if (home / "spaces").is_dir()]]:
+            cand = hack(base, reg)
+            target = next((p for p in cand.list() if p.get("origin") == "migrated"), None) if base.is_dir() else None
+            if target:
+                pr = cand
+                break
+        if pr is None:
+            projects.mkdir(exist_ok=True)
+            pr = hack(projects, home / "workspace.json")
+            target = pr._create(LEGACY_NAME, origin="migrated")
         pid = target["id"]
-        pdir = projects / pid
+        pdir = pr.base / pid
         shared = home / "library" / "media"
         shared.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +324,7 @@ def migrate_legacy(home: Path) -> dict | None:
             if (home / d).is_dir():
                 n, size = _dir_stats(home / d)
                 before[d] = {"files": n, "bytes": size}
-        loose = [f for f in projects.glob("*.json") if f.is_file()]
+        loose = [f for f in projects.glob("*.json") if f.is_file()] if projects.is_dir() else []
         before["projects_json"] = {"files": len(loose), "bytes": sum(f.stat().st_size for f in loose)}
         if not any(mig.glob("backup-*")):
             bak.mkdir()
@@ -399,3 +414,236 @@ def promote_media(src_media: Path, shared: Path, mid: str) -> bool:
     shutil.copy2(Path(src_media) / m["file"], Path(shared) / m["file"])
     _write_json(dst_meta, {**m, "shared": True})
     return True
+
+
+# ================================================================ 워크스페이스 (프로젝트 위의 묶음)
+
+class Spaces:
+    """워크스페이스 목록과 '지금 열린 워크스페이스'. 각 워크스페이스 안에 Projects가 있어요."""
+
+    def __init__(self, home: Path):
+        self.home = Path(home)
+        self.base = self.home / "spaces"
+        self.reg = self.home / "workspace.json"
+        self._projects: dict[str, Projects] = {}
+        self.base.mkdir(parents=True, exist_ok=True)
+        with _lock:
+            migrate_legacy(self.home)
+            migrate_spaces(self.home)
+            if not self.list():
+                self._create(DEFAULT_SPACE, origin="fresh")
+            if self.active not in {p["id"] for p in self.list()}:
+                self._set_active(self.list()[0]["id"])
+
+    # ---- 위치
+    def dir(self, sid: str) -> Path:
+        return self.base / check_id(sid)
+
+    def exists(self, sid: str) -> bool:
+        try:
+            return (self.dir(sid) / "space.json").exists()
+        except HTTPException:
+            return False
+
+    def projects(self, sid: str) -> Projects:
+        if sid not in self._projects:
+            if not self.exists(sid):
+                raise HTTPException(404, "워크스페이스를 찾을 수 없어요.")
+            self._projects[sid] = Projects(self.dir(sid))
+        return self._projects[sid]
+
+    # ---- 읽기
+    def _reg(self) -> dict:
+        d = _read_json(self.reg, {})
+        return d if isinstance(d, dict) else {}
+
+    @property
+    def active(self) -> str:
+        return self._reg().get("active_space", "")
+
+    def _set_active(self, sid: str) -> None:
+        d = self._reg()
+        recent = [x for x in d.get("recent", []) if x != sid and self.exists(x)]
+        _write_json(self.reg, {"version": 3, "active_space": sid, "recent": [sid, *recent][:12]})
+
+    def info(self, sid: str) -> dict:
+        d = _read_json(self.dir(sid) / "space.json", None)
+        if not isinstance(d, dict):
+            raise HTTPException(404, "워크스페이스를 찾을 수 없어요.")
+        return {k: d[k] for k in ("id", "name", "created", "updated", "origin", "version") if k in d}
+
+    def list(self) -> list[dict]:
+        out = []
+        for p in sorted(self.base.iterdir()) if self.base.exists() else []:
+            d = _read_json(p / "space.json", None) if p.is_dir() else None
+            if isinstance(d, dict) and d.get("id") == p.name:
+                out.append(self.info(p.name))
+        return out
+
+    def listing(self) -> list[dict]:
+        rank = {s: i for i, s in enumerate(self._reg().get("recent", []))}
+        items = []
+        for d in self.list():
+            n = len([p for p in (self.dir(d["id"]) / "projects").iterdir() if (p / "project.json").exists()]) if (self.dir(d["id"]) / "projects").exists() else 0
+            items.append({**d, "projects": n, "active": d["id"] == self.active, "recent": rank.get(d["id"], 99)})
+        items.sort(key=lambda x: (x["recent"], -x.get("updated", 0)))
+        return items
+
+    # ---- 쓰기
+    def _unique_id(self, name: str) -> str:
+        base = slug(name)
+        sid, n = base, 2
+        while (self.base / sid).exists():
+            sid = f"{base}-{n}"
+            n += 1
+        return sid
+
+    def _create(self, name: str, origin: str = "created") -> dict:
+        name = name.strip()[:60] or "새 워크스페이스"
+        sid = self._unique_id(name)
+        d = self.base / sid
+        (d / "library" / "media").mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        _write_json(d / "space.json", {"id": sid, "name": name, "created": now, "updated": now, "origin": origin, "version": 1})
+        Projects(d)                       # 첫 프로젝트 하나를 같이 만들어 둬요
+        if not self._reg().get("active_space"):
+            self._set_active(sid)
+        return self.info(sid)
+
+    def create(self, name: str, open_: bool = True) -> dict:
+        with _lock:
+            info = self._create(name)
+            if open_:
+                self._set_active(info["id"])
+            return info
+
+    def open(self, sid: str) -> dict:
+        with _lock:
+            info = self.info(sid)
+            self.projects(sid)
+            self._set_active(sid)
+            return info
+
+    def rename(self, sid: str, name: str) -> dict:
+        name = name.strip()[:60]
+        if not name:
+            raise HTTPException(400, "이름을 적어 주세요.")
+        with _lock:
+            d = _read_json(self.dir(sid) / "space.json", None)
+            if not isinstance(d, dict):
+                raise HTTPException(404, "워크스페이스를 찾을 수 없어요.")
+            d.update(name=name, updated=time.time())
+            _write_json(self.dir(sid) / "space.json", d)
+            return self.info(sid)
+
+    def delete(self, sid: str, confirm: str) -> dict:
+        """폴더째 _trash로 옮깁니다 (안의 프로젝트도 모두). 이름을 똑같이 적어야 하고, 마지막 하나는 못 지워요."""
+        with _lock:
+            info = self.info(sid)
+            if confirm.strip() != info["name"]:
+                raise HTTPException(400, "확인용 이름이 달라요. 워크스페이스 이름을 그대로 적어 주세요.")
+            rest = [s for s in self.list() if s["id"] != sid]
+            if not rest:
+                raise HTTPException(400, "마지막 워크스페이스는 지울 수 없어요. 먼저 새 워크스페이스를 만들어 주세요.")
+            trash = self.home / "_trash"
+            trash.mkdir(exist_ok=True)
+            dest = trash / f"space-{sid}-{time.strftime('%Y%m%d-%H%M%S')}"
+            self.dir(sid).rename(dest)
+            self._projects.pop(sid, None)
+            if self.active == sid:
+                recent = [x for x in self._reg().get("recent", []) if x != sid and self.exists(x)]
+                self._set_active(recent[0] if recent else rest[0]["id"])
+            return {"ok": True, "trash": str(dest)}
+
+    def move_project(self, pid: str, src: str, dst: str) -> dict:
+        """프로젝트를 다른 워크스페이스로 옮깁니다 (폴더 이름 바꾸기). 그 프로젝트가 쓰는 '출발 워크스페이스 전용 미디어'
+        (템플릿 인트로·아웃트로 등)는 도착 워크스페이스 보관함에 복사해 둬서 편집 상태·보관본이 그대로 열려요."""
+        if src == dst:
+            raise HTTPException(400, "같은 워크스페이스예요.")
+        with _lock:
+            sp, dp = self.projects(src), self.projects(dst)
+            info = sp.info(pid)
+            if len(sp.list()) <= 1:
+                # 마지막 프로젝트를 옮기면 출발 워크스페이스가 비니, 빈 프로젝트를 하나 새로 만들어 둡니다
+                sp._create(FRESH_NAME, origin="fresh")
+            pdir = sp.dir(pid)
+            # 이 프로젝트가 가리키는 미디어 id 중 출발 워크스페이스 보관함에 있는 것
+            ids = set()
+            for f in [pdir / "timeline.json", *(pdir / "saved").glob("*.json")]:
+                try:
+                    ids.update(re.findall(r"[0-9a-f]{32}", f.read_text(encoding="utf-8")))
+                except OSError:
+                    pass
+            src_lib, dst_lib = self.dir(src) / "library" / "media", self.dir(dst) / "library" / "media"
+            copied = [m for m in sorted(ids) if promote_media(src_lib, dst_lib, m)]
+            new_id = dp._unique_id(info["name"])
+            dest = dp.base / new_id
+            pdir.rename(dest)
+            info = _read_json(dest / "project.json", info)
+            info.update(id=new_id, updated=time.time())
+            _write_json(dest / "project.json", info)
+            for st in (sp, dp):
+                st._set_active(st.active if st.exists(st.active) else st.list()[0]["id"])
+            dp._set_active(new_id)
+            return {**info, "space": dst, "copied_media": copied}
+
+
+def migrate_spaces(home: Path) -> dict | None:
+    """예전 구조(workspace/projects/<프로젝트>/)를 '기본 워크스페이스'의 projects/로 옮깁니다. 할 일이 없으면 None."""
+    home = Path(home)
+    old = home / "projects"
+    todo = [p for p in sorted(old.iterdir()) if (p / "project.json").exists()] if old.is_dir() else []
+    if not todo and not (old.is_dir() and not any(old.iterdir())):
+        return None
+    with _lock:
+        mig = home / "_migration"
+        mig.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        spaces = home / "spaces"
+        spaces.mkdir(exist_ok=True)
+        # 옮길 워크스페이스 (만들다 만 게 있으면 이어서 씁니다)
+        sp = Spaces.__new__(Spaces)
+        sp.home, sp.base, sp.reg, sp._projects = home, spaces, home / "workspace.json", {}
+        target = next((s for s in sp.list() if s.get("origin") == "migrated"), None)
+        old_reg = _read_json(home / "workspace.json", {})
+        if target is None:
+            sid = sp._unique_id(DEFAULT_SPACE)
+            d = spaces / sid
+            (d / "library" / "media").mkdir(parents=True, exist_ok=True)
+            now = time.time()
+            _write_json(d / "space.json", {"id": sid, "name": DEFAULT_SPACE, "created": now, "updated": now, "origin": "migrated", "version": 1,
+                                           "active": old_reg.get("active", ""), "recent": old_reg.get("recent", [])})
+            target = sp.info(sid)
+        sid = target["id"]
+        sdir = spaces / sid
+        # 백업: 프로젝트 메타데이터와 옛 workspace.json
+        bak = mig / f"backup-spaces-{stamp}"
+        if not any(mig.glob("backup-spaces-*")):
+            bak.mkdir()
+            for p in todo:
+                (bak / "projects" / p.name).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(p / "project.json", bak / "projects" / p.name / "project.json")
+            if (home / "workspace.json").exists():
+                shutil.copy2(home / "workspace.json", bak / "workspace.json")
+        before_n, before_b = _dir_stats(old) if old.is_dir() else (0, 0)
+        log: list = []
+        for p in todo:
+            _move(p, sdir / "projects" / p.name, log, sdir / "projects" / "legacy-leftovers")
+        if old.is_dir():
+            try:
+                old.rmdir()
+            except OSError:
+                _move(old, sdir / "projects" / "legacy-leftovers", log, sdir / "projects" / "legacy-leftovers")
+        after_n, after_b = _dir_stats(sdir / "projects")
+        ok = after_n >= before_n and after_b >= before_b
+        _write_json(mig / f"manifest-spaces-{stamp}.json", {"time": stamp, "space": sid, "projects": [p.name for p in todo],
+                    "before": {"files": before_n, "bytes": before_b}, "after": {"files": after_n, "bytes": after_b}, "verified": ok, "moved": log})
+        if not ok:
+            raise RuntimeError(f"옮긴 뒤 파일 수·크기가 맞지 않아요. 기록: {mig}")
+        # 열린 프로젝트 기억을 워크스페이스로 옮기고, workspace.json을 새 모양으로
+        reg = _read_json(sdir / "space.json", {})
+        reg.setdefault("active", old_reg.get("active", ""))
+        reg.setdefault("recent", old_reg.get("recent", []))
+        _write_json(sdir / "space.json", reg)
+        _write_json(home / "workspace.json", {"version": 3, "active_space": sid, "recent": [sid]})
+        return {"space": sid, "projects": [p.name for p in todo]}
