@@ -38,20 +38,8 @@
   ::-webkit-scrollbar-thumb:hover { background: #4a5163; background-clip: content-box; border: 2px solid transparent; } ::-webkit-scrollbar-corner { background: transparent; }
 
 
-  /* ---- 프로젝트 선택기 ---- */
-  #spaceBtn { max-width: 180px; } #spaceBtn .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #projBtn { max-width: 220px; font-weight: 600; } #projBtn .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  dialog#projDlg { background: var(--panel); color: var(--ink); border: 1px solid var(--line2); border-radius: 12px; padding: 16px 20px; width: min(640px, 94vw); max-height: 86vh; box-shadow: 0 24px 60px #000b; }
-  dialog#projDlg::backdrop { background: rgba(0,0,0,.6); }
-  #projDlg .ph2 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; } #projDlg .ph2 b { font-size: 15px; flex: 1; }
-  #projDlg .prow { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; margin-top: 5px; background: var(--panel2); }
-  #projDlg .prow.cur { border-color: var(--accent); }
-  #projDlg .prow .pn { flex: 1; min-width: 0; } #projDlg .prow .pn b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #projDlg .prow small { color: var(--muted); font-size: 11px; }
-  #projDlg .prow button { padding: 3px 8px; }
-  #projDlg .pnew { display: flex; gap: 6px; margin: 6px 0 10px; } #projDlg .pnew input { flex: 1; }
-  #projDlg #projMsg { min-height: 1.2em; font-size: 12px; color: var(--muted); margin-top: 8px; white-space: pre-wrap; } #projDlg #projMsg.err { color: #ff7b7b; }
-  #projDlg h4 { margin: 12px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent2); }
+  #spaceBtn { max-width: 180px; } #spaceBtn .nm, #projBtn .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #projBtn { max-width: 220px; font-weight: 600; }   /* 두 버튼은 workspace_picker.js 의 화면을 엽니다 */
 
   /* ---- 위쪽 막대: 이름 · 작업공간 · 도구 ---- */
   #appbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
@@ -568,18 +556,6 @@
   <div id="lenBadges"></div>
 </div>
 <div id="timeline"><div id="tlInner"><div id="heads"></div><canvas id="tl"></canvas></div></div>
-
-<dialog id="projDlg">
-  <div class="ph2"><b>워크스페이스 · 프로젝트</b><button id="projClose">닫기 (Esc)</button></div>
-  <p class="muted" style="margin:0 0 6px;font-size:12px"><b>워크스페이스</b>는 채널·클라이언트·시리즈 같은 큰 묶음이고, <b>프로젝트</b>는 그 안의 작업 하나예요. 템플릿·엔딩 프리셋·내가 올린 효과음/음악은 워크스페이스별로 두고(공용으로 저장하면 모든 워크스페이스에서 보여요), 목소리 캐릭터·AI 모델은 모두 같이 써요.</p>
-  <h4>워크스페이스</h4>
-  <div class="pnew"><input type="text" id="spNew" placeholder="새 워크스페이스 이름" maxlength="60"><button id="spMk" class="primary">+ 새 워크스페이스</button></div>
-  <div id="spList"></div>
-  <h4 id="projHead">프로젝트</h4>
-  <div class="pnew"><input type="text" id="projNew" placeholder="새 프로젝트 이름" maxlength="60"><button id="projMk" class="primary">+ 새 프로젝트</button></div>
-  <div id="projList"></div>
-  <div id="projMsg"></div>
-</dialog>
 
 <dialog id="keysDlg">
   <div class="kh"><b>단축키</b><button id="keysClose">닫기 (Esc)</button></div>
@@ -2624,97 +2600,6 @@ const KEYS = [
   ['화면', [['?', '이 안내'], ['경계 끌기', '패널 크기 바꾸기 (두 번 누르면 기본값)'], ['상단 탭', '편집 · 오디오 · 색 보정 · 쇼츠·릴스 작업공간'], ['Esc', '선택 해제']]],
 ];
 
-// ================================================================ 프로젝트 선택기
-const projApi = async (path, opt = {}) => {
-  const o = { ...opt };
-  if (o.json !== undefined) { o.method = o.method || 'POST'; o.headers = { 'Content-Type': 'application/json' }; o.body = JSON.stringify(o.json); delete o.json; }
-  const r = await fetch('/api' + path, o);
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : '요청이 올바르지 않아요.'); e.status = r.status; throw e; }
-  return j;
-};
-const projSay = (msg, err) => { $('projMsg').textContent = msg || ''; $('projMsg').className = err ? 'err' : ''; };
-const projAgo = (t) => { const d = (Date.now() / 1000 - t) / 60; return d < 1 ? '방금' : d < 60 ? `${Math.floor(d)}분 전` : d < 1440 ? `${Math.floor(d / 60)}시간 전` : `${Math.floor(d / 1440)}일 전`; };
-const goAfter = () => { try { localStorage.setItem(STORE, JSON.stringify({ project, ui })); } catch {} location.reload(); };
-const goFail = (retry) => (e) => { if (e.status === 409 && confirm(e.message + '\n\n그래도 바꿀까요? (돌고 있는 작업은 이전 프로젝트가 아니라 새로 연 프로젝트 폴더에 결과를 남길 수 있어요)')) return retry(true); projSay(e.message, true); };
-function goProject(id, force) {   // 서버에서 프로젝트를 바꾸고 화면을 새로 불러와요 (프로젝트마다 보관함·편집 상태가 다르니까요)
-  return projApi('/workspace/open', { json: { id, force: !!force } }).then(goAfter).catch(goFail((f) => goProject(id, f)));
-}
-function goSpace(id, force) {
-  return projApi('/workspace/spaces/open', { json: { id, force: !!force } }).then(goAfter).catch(goFail((f) => goSpace(id, f)));
-}
-async function renderProjects() {
-  let info; try { info = await projApi('/workspace'); } catch (e) { return projSay(e.message, true); }
-  $('projHead').textContent = `프로젝트 — ${info.space_name}`;
-  $('spList').innerHTML = info.spaces.map((p) => `<div class="prow ${p.active ? 'cur' : ''}" data-id="${escapeHtml(p.id)}">
-    <span class="pn"><b>${escapeHtml(p.name)}${p.active ? ' · 열려 있음' : ''}</b><small>프로젝트 ${p.projects}개 · ${projAgo(p.updated || p.created)} 수정</small></span>
-    ${p.active ? '' : '<button data-a="open" class="primary">열기</button>'}<button data-a="ren">이름</button><button data-a="del" title="지우기 (이름을 확인해요)">지우기</button></div>`).join('');
-  $('spList').querySelectorAll('.prow').forEach((el) => {
-    const p = info.spaces.find((x) => x.id === el.dataset.id);
-    el.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
-      try {
-        if (b.dataset.a === 'open') return goSpace(p.id);
-        if (b.dataset.a === 'ren') { const n = prompt('새 이름', p.name); if (n && n.trim()) { await projApi(`/workspace/spaces/${p.id}`, { method: 'PATCH', json: { name: n.trim() } }); if (p.active) $('spaceBtn').querySelector('.nm').textContent = n.trim(); await renderProjects(); } return; }
-        if (b.dataset.a === 'del') {
-          const n = prompt(`'${p.name}' 워크스페이스를 지울까요?\n안에 있는 프로젝트 ${p.projects}개(미디어·AI 결과·내보낸 영상·보관본)가 모두 들어 있어요. (폴더째 workspace/_trash로 옮겨 두니 직접 되돌릴 수 있어요)\n\n지우려면 워크스페이스 이름을 똑같이 적어 주세요.`);
-          if (n === null) return;
-          const r = await projApi(`/workspace/spaces/${p.id}/delete`, { json: { confirm: n } });
-          if (p.active) return location.reload();
-          projSay(`지웠어요. (${r.trash})`); return renderProjects();
-        }
-      } catch (e) { projSay(e.message, true); }
-    }));
-  });
-  const rows = info.projects, others = info.spaces.filter((x) => !x.active);
-  $('projList').innerHTML = rows.map((p, i) => `<div class="prow ${p.active ? 'cur' : ''}" data-id="${escapeHtml(p.id)}">
-    <span class="pn"><b>${escapeHtml(p.name)}${p.active ? ' · 열려 있음' : ''}</b><small>미디어 ${p.media}개 · 보관본 ${p.saved}개 · ${projAgo(p.updated || p.created)} 수정${i < 3 && !p.active ? ' · 최근' : ''}</small></span>
-    ${p.active ? '' : '<button data-a="open" class="primary">열기</button>'}<button data-a="ren">이름</button><button data-a="dup">복제</button>${others.length ? '<button data-a="mv" title="다른 워크스페이스로 옮기기">옮기기</button>' : ''}<button data-a="del" title="지우기 (이름을 확인해요)">지우기</button></div>`).join('');
-  $('projList').querySelectorAll('.prow').forEach((el) => {
-    const p = rows.find((x) => x.id === el.dataset.id);
-    el.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
-      try {
-        if (b.dataset.a === 'open') return goProject(p.id);
-        if (b.dataset.a === 'ren') { const n = prompt('새 이름', p.name); if (n && n.trim()) { await projApi(`/workspace/projects/${p.id}`, { method: 'PATCH', json: { name: n.trim() } }); if (p.active) $('projBtn').querySelector('.nm').textContent = n.trim(); await renderProjects(); } return; }
-        if (b.dataset.a === 'dup') { projSay('복제하는 중…'); const d = await projApi(`/workspace/projects/${p.id}/duplicate`, { json: { name: '' } }); projSay(`'${d.name}'을 만들었어요. (내보낸 영상은 복제하지 않아요)`); return renderProjects(); }
-        if (b.dataset.a === 'mv') {
-          const pick = prompt(`'${p.name}'을 어느 워크스페이스로 옮길까요? 번호를 적어 주세요.\n` + others.map((x, k) => `${k + 1}. ${x.name}`).join('\n') + '\n\n(미디어·AI 결과·보관본이 함께 옮겨가요. 이 워크스페이스 전용 템플릿 인트로·아웃트로 파일은 복사돼요)');
-          const t = others[(parseInt(pick, 10) || 0) - 1]; if (!t) return;
-          projSay('옮기는 중…'); await projApi(`/workspace/projects/${p.id}/move`, { json: { space: t.id } });
-          if (p.active) return location.reload();
-          projSay(`'${p.name}'을 '${t.name}'로 옮겼어요.`); return renderProjects();
-        }
-        if (b.dataset.a === 'del') {
-          const n = prompt(`'${p.name}' 프로젝트를 지울까요?\n미디어·AI 결과·내보낸 영상·보관본이 들어 있어요. (폴더째 이 워크스페이스의 _trash로 옮겨 두니 직접 되돌릴 수 있어요)\n\n지우려면 프로젝트 이름을 똑같이 적어 주세요.`);
-          if (n === null) return;
-          const r = await projApi(`/workspace/projects/${p.id}/delete`, { json: { confirm: n } });
-          if (p.active) return location.reload();
-          projSay(`지웠어요. (${r.trash})`); return renderProjects();
-        }
-      } catch (e) { projSay(e.message, true); }
-    }));
-  });
-}
-$('projBtn').querySelector('.nm').textContent = WSI.name || '프로젝트';
-$('spaceBtn').querySelector('.nm').textContent = WSI.space_name || '워크스페이스';
-const openProjDlg = () => { projSay(''); $('projDlg').showModal(); renderProjects(); };
-$('projBtn').onclick = openProjDlg; $('spaceBtn').onclick = openProjDlg;
-$('spMk').onclick = async () => {
-  try { const n = $('spNew').value.trim() || '새 워크스페이스'; await projApi('/workspace/spaces', { json: { name: n } }); location.reload(); } catch (e) { projSay(e.message, true); }
-};
-$('spNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('spMk').click(); e.stopPropagation(); });
-$('projClose').onclick = () => $('projDlg').close();
-$('projDlg').addEventListener('click', (e) => { if (e.target === $('projDlg')) $('projDlg').close(); });
-$('projMk').onclick = async () => {
-  try { const n = $('projNew').value.trim() || `프로젝트 ${new Date().toLocaleDateString('ko-KR')}`; await projApi('/workspace/projects', { json: { name: n } }); location.reload(); }
-  catch (e) { projSay(e.message, true); }
-};
-$('projNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('projMk').click(); e.stopPropagation(); });
-// 다른 탭에서 프로젝트를 바꿨으면 알려 줘요 (이 탭의 보관함이 다른 프로젝트 것이 되어 버리니까요)
-async function checkActiveProject() {
-  try { const w = await projApi('/workspace'); if ((w.active !== WSI.id || w.space !== WSI.space) && !$('projBanner')) { const b = document.createElement('div'); b.id = 'projBanner'; b.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:99;background:var(--accent);color:#1a1208;padding:8px 14px;border-radius:9px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px #0008'; b.textContent = '다른 창에서 프로젝트를 바꿨어요 — 눌러서 새로고침'; b.onclick = () => location.reload(); document.body.appendChild(b); } } catch {}
-}
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkActiveProject(); });
-
 function openKeys() {
   const dlg = $('keysDlg'); if (dlg.open) return;
   $('keysGrid').innerHTML = KEYS.map(([h, rows]) => `<h3>${h}</h3>` + rows.map(([k, d]) => `<div class="kr"><span>${escapeHtml(d)}</span><span>${k.split(' ').map((x) => (/^[/·]$/.test(x) ? x : `<kbd>${escapeHtml(hintKey(x))}</kbd>`)).join(' ')}</span></div>`).join('')).join('');
@@ -3490,7 +3375,7 @@ $('jApply').onclick = () => jGuard(async () => {
   J.fromClips = res.clips.filter((c) => c.track === vt.id).map((c) => c.id);   // 다시 분석·적용하면 이번에 놓은 클립(이음 모핑 다리 포함)을 대신해요
 }, 'jMsg2');
 
-window.__editor = { workspace: WSI, switchProject: (id) => goProject(id), get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; },
+window.__editor = { workspace: WSI, get project() { return project; }, get sel() { return sel; }, playhead, seek, addCue, edit, normalize, get media() { return media; },
   status, placeMedia, placeAtPlayhead, loadMedia, loadPeaksFor, uploadFiles, uid, newTrack, clipById, projectBody, projectLength, fmt, clamp, escapeHtml, setDock, freeAudioTrack,
   get SHORT() { return SHORT; }, get beats() { return BEATS; }, setBeats(b) { BEATS = b || []; draw(); },
   replaceProject(fn) { begin(); const np = fn(JSON.parse(JSON.stringify(project))); project = normalize(np); sel.clip = null; sel.cue = null; commit(); loadPeaksFor(); },
@@ -3761,5 +3646,6 @@ async function exportShorts(fmts) {
 })();
 </script>
 <script src="/editor-static/shorts_tools.js"></script>
+<script src="/editor-static/workspace_picker.js"></script>
 </body>
 </html>

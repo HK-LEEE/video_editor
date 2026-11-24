@@ -110,7 +110,7 @@ def editor():
 @app.get("/editor-static/{name}", include_in_schema=False)   # 편집기 화면 스크립트 (정해 둔 파일만)
 def editor_static(name: str):
     f = EDITOR_HTML.parent / name
-    if name not in {"shorts_tools.js"} or not f.exists():
+    if name not in {"shorts_tools.js", "workspace_picker.js"} or not f.exists():
         raise HTTPException(404)
     return FileResponse(f, media_type="text/javascript")
 

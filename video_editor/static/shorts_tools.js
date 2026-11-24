@@ -407,7 +407,7 @@ function paintTpl() {
     const el = document.createElement('div'); el.className = 'lib'; el.style.cursor = 'default';
     el.innerHTML = `<input type="checkbox" ${T.projSel.has(p.id) ? 'checked' : ''}><span class="n">${esc(p.name)}<small>${p.current ? '' : `📁 ${esc(p.workspace_name)} · `}클립 ${p.clips}개 · ${p.length.toFixed(1)}초</small></span><button data-a="open">${p.current ? '열기' : '그 프로젝트로'}</button><button data-a="del">✕</button>`;
     el.querySelector('input').onchange = (e) => (e.target.checked ? T.projSel.add(p.id) : T.projSel.delete(p.id));
-    el.querySelector('[data-a=open]').onclick = async () => { try { if (!p.current) { if (confirm(`'${p.name}'은 '${p.workspace_name}' 프로젝트의 보관본이에요.\n그 프로젝트로 바꿀까요?`)) await ed.switchProject(p.workspace); return; } const r = await api(`/projects/${p.id}`); ed.replaceProject(() => r.project); await ed.loadMedia(); say('mMsg', `'${r.name}'을 열었어요.`); } catch (e) { say('mMsg', e.message, true); } };
+    el.querySelector('[data-a=open]').onclick = async () => { try { if (!p.current) { if (confirm(`'${p.name}'은 '${p.workspace_name}' 프로젝트의 보관본이에요.\n그 프로젝트로 바꿀까요?`)) await window.__wsPicker.openProject(p.workspace); return; } const r = await api(`/projects/${p.id}`); ed.replaceProject(() => r.project); await ed.loadMedia(); say('mMsg', `'${r.name}'을 열었어요.`); } catch (e) { say('mMsg', e.message, true); } };
     el.querySelector('[data-a=del]').onclick = async () => { await api(`/projects/${p.id}`, { method: 'DELETE' }); T.projSel.delete(p.id); loadTpl(); };
     $('#pList').appendChild(el);
   }

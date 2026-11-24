@@ -317,3 +317,33 @@ def test_move_project_between_spaces_keeps_template_media_working(api):
     assert (tmp / "ws" / "spaces" / b["id"] / "library" / "media" / f"{intro['id']}.json").exists()
     ex = wait(c, c.post("/api/batch/export", json={"project_ids": [sv["id"]], "format": "shorts"}).json()["job"], 180)
     assert ex["status"] == "done" and all(x["ok"] for x in ex["result"]["results"]), ex
+
+
+def test_space_project_table_and_operations_on_other_space(api):
+    c, tmp, ws = api
+    first, pid = ws.sid, ws.pid
+    m = upload(c, make_voice(tmp / "a.wav"))
+    c.put("/api/workspace/timeline", json={"project": {"tracks": tracks(), "clips": [
+        {"id": "c1", "track": "a1", "media": m["id"], "src_in": 0, "src_out": 4, "start": 2, "speed": 2}]}, "ui": {}})
+    t = c.get(f"/api/workspace/spaces/{first}/projects").json()
+    row = t["projects"][0]
+    assert t["space_active"] and row["clips"] == 1 and row["length"] == pytest.approx(4.0) and row["media"] == 1 and row["bytes"] > 0 and row["active"]
+    b = c.post("/api/workspace/spaces", json={"name": "B"}).json()["id"]        # 이제 B가 열려 있음
+    assert not c.get(f"/api/workspace/spaces/{first}/projects").json()["space_active"]
+    # 열려 있지 않은 워크스페이스(first)의 프로젝트도 다룸: 만들기(열지 않고) · 이름 · 복제 · 옮기기 · 지우기
+    new = c.post(f"/api/workspace/projects?space={first}&open=false", json={"name": "새것"}).json()
+    assert c.get("/api/workspace").json()["space"] == b                          # 열지 않았으니 그대로 B
+    assert c.patch(f"/api/workspace/projects/{new['id']}?space={first}", json={"name": "새것2"}).json()["name"] == "새것2"
+    dup = c.post(f"/api/workspace/projects/{new['id']}/duplicate?space={first}", json={}).json()
+    mv = c.post(f"/api/workspace/projects/{dup['id']}/move?space={first}", json={"space": b})
+    assert mv.status_code == 200 and c.get("/api/workspace").json()["space"] == b          # 열려 있지 않던 프로젝트를 옮겨도 열린 곳은 그대로
+    names = lambda sid: {p["name"] for p in c.get(f"/api/workspace/spaces/{sid}/projects").json()["projects"]}
+    assert names(first) == {"기본 프로젝트", "새것2"} and "새것2 복사본" in names(b)
+    assert c.post(f"/api/workspace/projects/{new['id']}/delete?space={first}", json={"confirm": "새것2"}).status_code == 200
+    assert names(first) == {"기본 프로젝트"}
+    # 워크스페이스를 열면서 그 안의 프로젝트를 같이 열기
+    c.post(f"/api/workspace/projects?space={first}&open=false", json={"name": "둘째"})
+    second = [p for p in c.get(f"/api/workspace/spaces/{first}/projects").json()["projects"] if p["name"] == "둘째"][0]["id"]
+    assert c.post("/api/workspace/spaces/open", json={"id": first, "project": second}).status_code == 200
+    info = c.get("/api/workspace").json()
+    assert info["space"] == first and info["active"] == second

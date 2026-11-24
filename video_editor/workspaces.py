@@ -128,16 +128,33 @@ class Projects:
                 out.append(d)
         return out
 
-    def listing(self) -> dict:
+    def stats(self, pid: str) -> dict:
+        """표에 보여 줄 값: 타임라인 길이·클립 수(timeline.json), 미디어 수, 폴더 용량."""
+        pd = self.dir(pid)
+        tl = _read_json(pd / "timeline.json", {})
+        clips = (tl.get("project") or {}).get("clips") or [] if isinstance(tl, dict) else []
+        length = 0.0
+        for c in clips:
+            try:
+                length = max(length, float(c.get("start", 0)) + (float(c["src_out"]) - float(c["src_in"])) / (float(c.get("speed") or 1) or 1))
+            except (KeyError, TypeError, ValueError):
+                pass
+        media = [m for m in (pd / "media").glob("*.json") if not _read_json(m, {}).get("hidden")]
+        return {"length": round(length, 2), "clips": len(clips), "media": len(media), "saved": len(list((pd / "saved").glob("*.json"))),
+                "bytes": _dir_stats(pd)[1]}
+
+    def listing(self, detail: bool = False) -> dict:
         recent = self._reg().get("recent", [])
         rank = {pid: i for i, pid in enumerate(recent)}
         items = []
         for d in self.list():
             pd = self.dir(d["id"])
-            media = [m for m in (pd / "media").glob("*.json")
-                     if not (_read_json(m, {}).get("hidden"))]
-            items.append({**d, "media": len(media), "saved": len(list((pd / "saved").glob("*.json"))),
-                          "active": d["id"] == self.active, "recent": rank.get(d["id"], 99)})
+            if detail:
+                extra = self.stats(d["id"])
+            else:
+                media = [m for m in (pd / "media").glob("*.json") if not (_read_json(m, {}).get("hidden"))]
+                extra = {"media": len(media), "saved": len(list((pd / "saved").glob("*.json")))}
+            items.append({**d, **extra, "active": d["id"] == self.active, "recent": rank.get(d["id"], 99)})
         items.sort(key=lambda x: (x["recent"], -x.get("updated", 0)))
         return {"active": self.active, "projects": items}
 

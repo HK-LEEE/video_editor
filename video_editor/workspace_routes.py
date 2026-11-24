@@ -13,6 +13,7 @@ class NameReq(BaseModel):
 
 class OpenReq(BaseModel):
     id: str
+    project: str = ""          # 워크스페이스를 열면서 그 안의 이 프로젝트를 같이 엽니다
     force: bool = False        # 오래 걸리는 작업이 돌고 있어도 바꾸기
 
 
@@ -29,6 +30,13 @@ BUSY = "오래 걸리는 작업(AI 변환·받아쓰기 등)이 아직 돌고 �
 
 def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     sp = ws.spaces
+
+    def P(space: str):
+        """대상 워크스페이스의 프로젝트 목록 (비우면 열려 있는 워크스페이스)."""
+        return sp.projects(space) if space else ws.projects
+
+    def active_here(space: str, pid: str) -> bool:
+        return (not space or space == sp.active) and pid == ws.projects.active
 
     @router.get("/workspace")
     def workspace_info():
@@ -47,7 +55,10 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     def open_space(b: OpenReq):
         if jobs.busy() and not b.force and b.id != sp.active:
             raise HTTPException(409, BUSY)
-        return sp.open(b.id)
+        out = sp.open(b.id)
+        if b.project:
+            sp.projects(b.id).open(b.project)
+        return out
 
     @router.patch("/workspace/spaces/{sid}")
     def rename_space(sid: str, b: NameReq):
@@ -59,13 +70,22 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
             raise HTTPException(409, "이 워크스페이스에서 오래 걸리는 작업이 돌고 있어요. 끝난 뒤에 지워 주세요.")
         return sp.delete(sid, b.confirm)
 
-    # ---- 프로젝트 (열려 있는 워크스페이스 안)
+    @router.get("/workspace/spaces/{sid}/projects")
+    def space_projects(sid: str):
+        """표(자세히 보기)용: 그 워크스페이스의 프로젝트들 + 길이·클립·미디어·용량."""
+        out = sp.projects(sid).listing(detail=True)
+        return {**out, "space": sid, "space_active": sid == sp.active}
+
+    # ---- 프로젝트 (space 쿼리로 다른 워크스페이스의 프로젝트도 다룰 수 있어요. 비우면 열려 있는 워크스페이스)
     @router.post("/workspace/projects")
-    def create_project(b: NameReq):
-        """새 프로젝트를 만들고 바로 엽니다."""
-        if jobs.busy():
+    def create_project(b: NameReq, space: str = "", open: bool = True):
+        """새 프로젝트를 만들고 (기본은) 바로 엽니다."""
+        if open and jobs.busy():
             raise HTTPException(409, "오래 걸리는 작업이 아직 돌고 있어요. 끝난 뒤에 바꿔 주세요.")
-        return ws.projects.create(b.name or "새 프로젝트")
+        info = P(space).create(b.name or "새 프로젝트", open_=open)
+        if open and space and space != sp.active:
+            sp.open(space)
+        return info
 
     @router.post("/workspace/open")
     def open_project(b: OpenReq):
@@ -74,29 +94,30 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         return ws.projects.open(b.id)
 
     @router.patch("/workspace/projects/{pid}")
-    def rename_project(pid: str, b: NameReq):
-        return ws.projects.rename(pid, b.name)
+    def rename_project(pid: str, b: NameReq, space: str = ""):
+        return P(space).rename(pid, b.name)
 
     @router.post("/workspace/projects/{pid}/duplicate")
-    def duplicate_project(pid: str, b: NameReq):
-        return ws.projects.duplicate(pid, b.name)
+    def duplicate_project(pid: str, b: NameReq, space: str = ""):
+        return P(space).duplicate(pid, b.name)
 
     @router.post("/workspace/projects/{pid}/move")
-    def move_project(pid: str, b: MoveReq):
+    def move_project(pid: str, b: MoveReq, space: str = ""):
         """프로젝트를 다른 워크스페이스로 옮깁니다 (열린 프로젝트면 옮긴 뒤 그쪽에서 열려요)."""
         if jobs.busy():
             raise HTTPException(409, "오래 걸리는 작업이 아직 돌고 있어요. 끝난 뒤에 옮겨 주세요.")
-        was_active = pid == ws.projects.active
-        out = sp.move_project(pid, ws.sid, b.space)
+        src = space or ws.sid
+        was_active = active_here(space, pid)
+        out = sp.move_project(pid, src, b.space)
         if was_active:
             sp.open(b.space)
         return out
 
     @router.post("/workspace/projects/{pid}/delete")
-    def delete_project(pid: str, b: DeleteReq):
-        if jobs.busy() and pid == ws.projects.active:
+    def delete_project(pid: str, b: DeleteReq, space: str = ""):
+        if jobs.busy() and active_here(space, pid):
             raise HTTPException(409, "이 프로젝트에서 오래 걸리는 작업이 돌고 있어요. 끝난 뒤에 지워 주세요.")
-        return ws.projects.delete(pid, b.confirm)
+        return P(space).delete(pid, b.confirm)
 
     @router.get("/workspace/timeline")
     def get_timeline(project: str = "", space: str = ""):
