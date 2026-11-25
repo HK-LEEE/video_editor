@@ -61,7 +61,7 @@ css.textContent = `
 `;
 document.head.appendChild(css);
 
-const TABS = [['sound', '소리'], ['beat', '박자'], ['text', '글자'], ['copy', '문구'], ['tpl', '템플릿'], ['end', '엔딩']];
+const TABS = [['sound', '소리'], ['beat', '박자'], ['text', '글자'], ['copy', '문구'], ['tpl', '템플릿'], ['end', '인트로·엔딩'], ['like', '톡톡']];
 let cur = 'sound';
 root.innerHTML = `<div class="tsub">${TABS.map(([k, v]) => `<button data-t="${k}">${v}</button>`).join('')}</div><div id="tBody"></div>`;
 root.querySelectorAll('.tsub button').forEach((b) => (b.onclick = () => go(b.dataset.t)));
@@ -343,7 +343,7 @@ async function loadTpl() {
 const videoMedia = () => Object.values(ed.media).filter((m) => m.kind === 'video' && !m.lib && !m.hidden).sort((a, b) => a.name.localeCompare(b.name));
 const chn = (tpl) => `<span class="chn" data-tpl="${esc(tpl)}">${esc(tpl.replace('{channel}', T.channel || '내 채널'))}</span>`;   // 채널 이름을 적으면 그 자리만 바로 바뀜
 const summary = (t) => [t.subtitle_style && '자막 스타일', t.hook && '훅 제목 모양', t.intro && `인트로 ${esc((ed.media[t.intro] || {}).name || '')}`, t.intro_card && '인트로 카드', t.outro && `아웃트로 ${esc((ed.media[t.outro] || {}).name || '')}`, t.outro_card && '아웃트로 카드',
-  t.watermark && `워터마크 ${chn(t.watermark.text)}`, t.ending && `엔딩 ${esc((T.endings.find((e) => e.id === t.ending) || {}).name || '')}`, t.ending_card && '엔딩 애니메이션'].filter(Boolean);
+  t.watermark && `워터마크 ${chn(t.watermark.text)}`, t.ending && `엔딩 ${esc((T.endings.find((e) => e.id === t.ending) || {}).name || '')}`, t.ending_card && '엔딩 애니메이션', t.like_pause && '좋아요 톡톡 정지'].filter(Boolean);
 // 템플릿 모양을 작은 세로 화면으로 미리 보여줘요 (훅 제목 바 · 자막 · 워터마크)
 function mock(t) {
   const st = t.subtitle_style, h = t.hook, w = t.watermark, ic = t.intro_card;
@@ -368,6 +368,7 @@ function pageTpl() {
       <div class="row"><span class="muted">아웃트로</span><select id="nOutro"></select></div>
       <div class="row"><span class="muted">워터마크</span><input type="text" id="nWm" placeholder="비우면 없음 (예: @내채널)"></div>
       <div class="row"><span class="muted">엔딩</span><select id="nEnd"></select></div>
+      <label class="ck"><input type="checkbox" id="nLike"> 영상 가운데에 '좋아요 톡톡' 정지 화면 넣기</label>
       <label class="ck"><input type="checkbox" id="nGlobal"> 모든 워크스페이스 공용 (끄면 '${esc(ed.workspace.space_name || '이')}' 워크스페이스 전용)</label>
       <div class="row"><button id="nSave" class="primary">템플릿 저장</button></div></div>
     <h3>일괄 적용 대상</h3>
@@ -432,7 +433,7 @@ function paintTpl() {
 }
 async function saveTpl() {
   const name = $('#nName').value.trim(); if (!name) return say('mMsg', '템플릿 이름을 적어 주세요.', true);
-  const t = { name, intro: $('#nIntro').value || null, outro: $('#nOutro').value || null, ending: $('#nEnd').value || null, scope: $('#nGlobal').checked ? 'global' : 'space' };
+  const t = { name, intro: $('#nIntro').value || null, outro: $('#nOutro').value || null, ending: $('#nEnd').value || null, like_pause: $('#nLike').checked ? {} : null, scope: $('#nGlobal').checked ? 'global' : 'space' };
   if ($('#nSub').checked) t.subtitle_style = ed.project.subtitle_style;
   const wm = $('#nWm').value.trim();
   if (wm) { const w = ed.project.overlays.find((o) => o.kind === 'watermark'); t.watermark = w ? { text: wm, x: w.x, y: w.y, size: w.size, opacity: w.opacity, color: w.color } : { text: wm }; }
@@ -471,16 +472,16 @@ async function batchExport() {
 }
 
 // ================================================================ 7 구독·좋아요 엔딩
-const E = { kinds: {}, defaults: {}, soft: {}, items: [], draft: null };
-async function loadEndings() { try { const r = await api('/endings'); E.kinds = r.kinds; E.defaults = r.defaults; E.soft = r.soft || {}; E.items = r.items; if (!E.draft) E.draft = { name: '', ...r.defaults }; } catch (e) { say('eMsg', e.message, true); } if (cur === 'end') paintEnd(); }
+const E = { kinds: {}, introKinds: {}, defaults: {}, soft: {}, intro: {}, like: {}, items: [], draft: null };
+async function loadEndings() { try { const r = await api('/endings'); E.kinds = r.kinds; E.defaults = r.defaults; E.soft = r.soft || {}; E.introKinds = r.intro_kinds || {}; E.intro = r.intro || {}; E.like = r.like || {}; E.items = r.items; if (!E.draft) E.draft = { name: '', ...r.defaults }; } catch (e) { say('eMsg', e.message, true); } if (cur === 'end') paintEnd(); }
 function pageEnd() { body().innerHTML = '<div id="eBox"><p class="muted">불러오는 중…</p></div>'; E.draft ? paintEnd() : null; loadEndings(); }
 function paintEnd() {
   const d = E.draft; if (!d || !$('#eBox')) return;
   $('#eBox').innerHTML = `
-    <p class="muted">영상 맨 끝에 붙는 <b>구독·좋아요 애니메이션</b> (직접 그린 원본 디자인). 모양과 문구를 고쳐 프리셋으로 저장하고, 템플릿에 넣어서 여러 영상에 한 번에 붙여요.</p>
+    <p class="muted">영상 맨 앞에 붙는 <b>부드러운 인트로</b>와 맨 끝에 붙는 <b>구독·좋아요 엔딩</b> (직접 그린 원본 디자인). 모양과 문구를 고쳐 프리셋으로 저장하고, 템플릿에 넣어서 여러 영상에 한 번에 붙여요.</p>
     <div class="card">
-      <div class="row"><span class="muted">모양</span><select id="eKind">${Object.entries(E.kinds).map(([k, v]) => `<option value="${k}" ${k === d.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
-      <div class="row" id="eImgRow" style="${E.soft[d.kind] ? '' : 'display:none'}"><span class="muted">이미지</span><span id="eImgBox">${d.image ? `<img src="/api/endings/image/${esc(d.image)}" style="height:44px;border-radius:50%;vertical-align:middle">` : '<span class="muted">없음 (하트 장식이 들어가요)</span>'}</span><input type="file" id="eImgFile" accept="image/*" style="display:none"><button id="eImgBtn">🖼 이미지 고르기</button><button id="eImgDel">✕</button></div>
+      <div class="row"><span class="muted">모양</span><select id="eKind">${[['엔딩 (영상 맨 끝)', E.kinds], ['인트로 (영상 맨 앞)', E.introKinds]].map(([g, ks]) => `<optgroup label="${g}">${Object.entries(ks).map(([k, v]) => `<option value="${k}" ${k === d.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</optgroup>`).join('')}</select></div>
+      <div class="row" id="eImgRow" style="${E.soft[d.kind] || E.intro[d.kind] ? '' : 'display:none'}"><span class="muted">이미지</span><span id="eImgBox">${d.image ? `<img src="/api/endings/image/${esc(d.image)}" style="height:44px;border-radius:50%;vertical-align:middle">` : '<span class="muted">없음 (하트 장식이 들어가요)</span>'}</span><input type="file" id="eImgFile" accept="image/*" style="display:none"><button id="eImgBtn">🖼 이미지 고르기</button><button id="eImgDel">✕</button></div>
       <div class="row"><span class="muted">큰 글자</span><input type="text" id="eText" value="${esc(d.text)}" maxlength="30"></div>
       <div class="row"><span class="muted">작은 글자</span><input type="text" id="eSub" value="${esc(d.sub)}" maxlength="30"></div>
       <div class="row"><span class="muted">포인트 색</span><input type="color" id="eAcc" value="${d.accent}"><span class="muted">배경</span><input type="color" id="eB1" value="${d.bg1}"><input type="color" id="eB2" value="${d.bg2}"><span class="muted">글자색</span><input type="color" id="eTc" value="${d.text_color || '#5b3a29'}"><span class="muted">길이</span><input type="number" id="eDur" step="0.5" min="1.5" max="8" value="${d.duration}"><span class="muted">초</span></div>
@@ -492,7 +493,7 @@ function paintEnd() {
   const read = () => { d.kind = $('#eKind').value; d.text = $('#eText').value; d.sub = $('#eSub').value; d.accent = $('#eAcc').value; d.bg1 = $('#eB1').value; d.bg2 = $('#eB2').value; d.text_color = $('#eTc').value; d.duration = +$('#eDur').value || 3; d.name = $('#eName').value; d.scope = $('#eGlobal').checked ? 'global' : 'space'; };
   root.querySelectorAll('#eBox input, #eBox select').forEach((i) => i.addEventListener('change', read));
   $('#eKind').addEventListener('change', () => {   // 부드러운 모양을 고르면 어울리는 문구·색으로 채워 줘요
-    const sp = E.soft[$('#eKind').value];
+    const sp = E.soft[$('#eKind').value] || E.intro[$('#eKind').value];
     if (sp) Object.assign(d, sp);
     d.kind = $('#eKind').value; paintEnd();
   });
@@ -514,10 +515,10 @@ function paintEnd() {
   };
   for (const e of E.items) {
     const el = document.createElement('div'); el.className = 'card';
-    el.innerHTML = `<div class="row"><b style="flex:1">${esc(e.name)}</b><span class="muted">${e.scope === 'global' ? '🌐 공용 · ' : ''}${esc(E.kinds[e.kind] || e.kind)} · ${e.duration}초</span></div><div class="row"><button data-a="add" class="primary">영상 끝에 붙이기</button><button data-a="edit">불러와 고치기</button><button data-a="del">✕</button></div>`;
+    el.innerHTML = `<div class="row"><b style="flex:1">${esc(e.name)}</b><span class="muted">${e.scope === 'global' ? '🌐 공용 · ' : ''}${esc(E.kinds[e.kind] || E.introKinds[e.kind] || e.kind)} · ${e.duration}초</span></div><div class="row"><button data-a="add" class="primary">${E.introKinds[e.kind] ? '영상 맨 앞에 붙이기' : '영상 끝에 붙이기'}</button><button data-a="edit">불러와 고치기</button><button data-a="del">✕</button></div>`;
     el.querySelector('[data-a=add]').onclick = async () => {
       say('eMsg', '엔딩을 만들어 붙이는 중…');
-      try { const np = await api('/endings/apply', { json: { project: ed.projectBody(), ending_id: e.id } }); ed.replaceProject((p) => ({ ...p, clips: np.clips, tracks: np.tracks })); await ed.loadMedia(); say('eMsg', `'${e.name}'을 영상 끝에 붙였어요. ⌘Z로 되돌릴 수 있어요.`); }
+      try { const np = await api('/endings/apply', { json: { project: ed.projectBody(), ending_id: e.id } }); ed.replaceProject((p) => ({ ...p, clips: np.clips, tracks: np.tracks, subtitles: np.subtitles, overlays: np.overlays })); await ed.loadMedia(); say('eMsg', `'${e.name}'을 영상 ${E.introKinds[e.kind] ? '맨 앞' : '끝'}에 붙였어요. ⌘Z로 되돌릴 수 있어요.`); }
       catch (err) { say('eMsg', err.message, true); }
     };
     el.querySelector('[data-a=edit]').onclick = () => { E.draft = { ...E.defaults, ...e }; paintEnd(); };
@@ -526,6 +527,52 @@ function paintEnd() {
   }
 }
 
-const PAGES = { sound: pageSound, beat: pageBeat, text: pageText, copy: pageCopy, tpl: pageTpl, end: pageEnd };
+// ================================================================ 8 좋아요 톡톡 (영상 중간 정지)
+const L = { spec: null };
+function pageLike() {
+  if (!L.spec) L.spec = { text: '좋아요 톡톡!', sub: '마음에 들었다면 눌러 주세요', accent: '#f2788a', bg1: '#fff6ea', bg2: '#fcd9bd', text_color: '#5b3a29', duration: 2.4 };
+  const d = L.spec, isV = (c) => c.tpl === 'likepause' && (ed.project.tracks.find((t) => t.id === c.track) || {}).kind === 'video';
+  body().innerHTML = `
+    <p class="muted">영상 <b>중간에 화면을 잠깐 멈추고</b>, 손끝이 하트를 <b>톡톡</b> 눌러 '좋아요'를 부탁하는 화면을 끼워요. 멈추는 장면은 그 순간의 영상이고, 뒤쪽 영상·자막은 멈춘 길이만큼 밀려요. 재생 위치를 원하는 곳에 두고 눌러 주세요.</p>
+    <div class="card">
+      <div class="row"><span class="muted">큰 글자</span><input type="text" id="lText" value="${esc(d.text)}" maxlength="30"></div>
+      <div class="row"><span class="muted">작은 글자</span><input type="text" id="lSub" value="${esc(d.sub)}" maxlength="30"></div>
+      <div class="row"><span class="muted">포인트 색</span><input type="color" id="lAcc" value="${d.accent}"><span class="muted">글자색</span><input type="color" id="lTc" value="${d.text_color}"><span class="muted">멈추는 길이</span><input type="number" id="lDur" step="0.5" min="1.5" max="5" value="${d.duration}"><span class="muted">초</span></div>
+      <label class="ck"><input type="checkbox" id="lSnap" checked> 말하는 도중이면 가까운 말 사이로 옮기기</label>
+      <div class="row"><button id="lPrev">▶ 미리보기</button><button id="lAdd" class="primary">재생 위치에서 멈추고 넣기</button></div>
+      <div id="lPrevBox"></div></div>
+    <div id="lMsg" class="tmsg"></div>
+    <h3>넣어 둔 정지 화면</h3><div id="lList"></div>`;
+  const read = () => { d.text = $('#lText').value; d.sub = $('#lSub').value; d.accent = $('#lAcc').value; d.text_color = $('#lTc').value; d.duration = +$('#lDur').value || 2.4; };
+  root.querySelectorAll('#tBody input').forEach((i) => i.addEventListener('change', read));
+  $('#lPrev').onclick = async () => {
+    read(); say('lMsg', '미리보기를 만드는 중…');
+    try { const r = await job('/likepause/preview', d); say('lMsg', ''); $('#lPrevBox').innerHTML = `<video src="${r.url}" controls autoplay loop playsinline></video>`; }
+    catch (e) { say('lMsg', e.message, true); }
+  };
+  $('#lAdd').onclick = async () => {
+    read(); say('lMsg', '멈춘 화면을 만드는 중… (몇 초 걸려요)'); $('#lAdd').disabled = true;
+    try {
+      const r = await api('/likepause/apply', { json: { project: ed.projectBody(), at: ed.playhead(), snap: $('#lSnap').checked, spec: d } });
+      ed.replaceProject((p) => ({ ...p, clips: r.clips, tracks: r.tracks, subtitles: r.subtitles, overlays: r.overlays })); await ed.loadMedia();
+      say('lMsg', `${ed.fmt(r.at)} 지점에 넣었어요. ⌘Z로 되돌릴 수 있어요.`); pageLike();
+    } catch (e) { say('lMsg', e.message, true); }
+    $('#lAdd').disabled = false;
+  };
+  const list = ed.project.clips.filter(isV).sort((a, b) => a.start - b.start);
+  $('#lList').innerHTML = list.length ? '' : '<p class="muted">아직 없어요.</p>';
+  for (const c of list) {
+    const el = document.createElement('div'); el.className = 'card';
+    el.innerHTML = `<div class="row"><b style="flex:1">${ed.fmt(c.start)} 지점 · ${((c.src_out - c.src_in) / c.speed).toFixed(1)}초</b><button data-a="go">이동</button><button data-a="del">✕ 빼기</button></div>`;
+    el.querySelector('[data-a=go]').onclick = () => ed.seek(c.start);
+    el.querySelector('[data-a=del]').onclick = async () => {
+      try { const r = await api('/likepause/remove', { json: { project: ed.projectBody(), clip_id: c.id } }); ed.replaceProject((p) => ({ ...p, clips: r.clips, subtitles: r.subtitles, overlays: r.overlays })); say('lMsg', '빼고 뒤를 당겨 붙였어요.'); pageLike(); }
+      catch (e) { say('lMsg', e.message, true); }
+    };
+    $('#lList').appendChild(el);
+  }
+}
+
+const PAGES = { sound: pageSound, beat: pageBeat, text: pageText, copy: pageCopy, tpl: pageTpl, end: pageEnd, like: pageLike };
 
 })();

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from .subtitles import SubtitleStyle
-from .templates import Anim, HookStyle, Template, Watermark
+from .templates import Anim, HookStyle, LikePause, Template, Watermark
 
 BUILTIN_PREFIX = "builtin-"
 
@@ -34,14 +34,15 @@ BUILTINS: list[Template] = [
        outro_card=Anim(kind="slide", text="도움이 됐다면", sub="저장해 두세요", accent="#38bdf8", bg1="#123b6b", bg2="#0b1b33", duration=1.4),
        ending_card=Anim(kind="soft_text", text="끝까지 봐주셔서 감사해요", sub="다음 영상도 확인하세요", accent="#5aa9e6", bg1="#f1f7fd", bg2="#cfe3f6", text_color="#26435f", duration=4.0),
        intro_transition="fade", outro_transition="fade"),
-    _t("emotional", name="감성형", desc="은은한 글로우 자막, 투명 배경 훅 제목, 서서히 떠오르는 인트로, 따뜻한 로고 엔딩",
+    _t("emotional", name="감성형", desc="은은한 글로우 자막, 투명 배경 훅 제목, 부드러운 크림빛 인트로, 영상 중간 '좋아요 톡톡' 정지, 따뜻한 로고 엔딩",
        subtitle_style=SubtitleStyle(font="AppleMyungjo", bold=False, color="#fff7ec", outline_color="#3b2a2a", outline=0.05, size=0.056,
                                     y=0.8, shadow=0.06, glow=0.35),
        hook=HookStyle(y=0.15, size=0.056, color="#fff7ec", bg_color="#000000", bg_opacity=0.0, outline=0.08, start=0.0, end=3.5),
        watermark=Watermark(text="{channel}", x=0.5, y=0.94, size=0.024, opacity=0.5, color="#fff7ec"),
-       intro_card=Anim(kind="fade", text="{channel}", sub="오늘의 이야기", accent="#f4c9a8", bg1="#2b1d2e", bg2="#5b3a4a", duration=1.8),
+       intro_card=Anim(kind="soft_open_logo", text="{channel}", sub="오늘의 이야기를 시작해요", accent="#f08a5d", bg1="#fff6ea", bg2="#fcd9bd", text_color="#5b3a29", duration=2.8),
        outro_card=Anim(kind="fade", text="고마워요", sub="{channel}", accent="#f4c9a8", bg1="#5b3a4a", bg2="#2b1d2e", duration=1.8),
        ending_card=Anim(kind="soft_logo", text="마음에 닿았다면", sub="구독으로 다시 만나요", accent="#f08a5d", bg1="#fff6ea", bg2="#fcd9bd", text_color="#5b3a29", duration=4.0),
+       like_pause=LikePause(),
        intro_transition="fade", outro_transition="fade"),
     _t("news", name="뉴스형", desc="하단 파란 띠 자막, 빨간 속보 느낌 훅 제목, 띠가 지나가는 인트로, 부드러운 감사 엔딩",
        subtitle_style=SubtitleStyle(color="#ffffff", outline=0.0, bg_color="#0b2a6b", bg_opacity=0.92, size=0.05, y=0.88, box_pad=0.35),

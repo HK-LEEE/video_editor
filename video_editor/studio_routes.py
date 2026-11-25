@@ -13,7 +13,7 @@ from . import beats as beats_mod
 from . import claude_copy, endings as endings_mod, library, shorts, thumbnail
 from .editor import Project, Workspace, _check_id, canvas_size, clip_len, export_video
 from . import builtin_templates, chat_edit
-from .templates import EndingPreset, ProjectStore, ScopedStore, Template, apply_ending, apply_template, project_from_media
+from .templates import EndingPreset, LikePause, ProjectStore, ScopedStore, Template, apply_ending, apply_intro, apply_template, insert_like_pause, project_from_media, remove_like_pauses
 
 
 class BeatsReq(BaseModel):
@@ -78,6 +78,18 @@ class BatchReq(BaseModel):
 class EndingApplyReq(BaseModel):
     project: Project
     ending_id: str
+
+
+class LikePauseReq(BaseModel):
+    project: Project
+    at: float = Field(ge=0)                 # 정지할 타임라인 초 (보통 재생 위치)
+    snap: bool = True                       # 말하는 도중이면 가까운 말 사이로 옮김
+    spec: LikePause = LikePause()
+
+
+class LikePauseRemoveReq(BaseModel):
+    project: Project
+    clip_id: str | None = None              # 비우면 모든 좋아요 정지 화면
 
 
 class ChatPlanReq(BaseModel):
@@ -294,6 +306,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
     @router.get("/endings")
     def list_endings():
         return {"kinds": endings_mod.KINDS, "defaults": endings_mod.DEFAULTS, "soft": endings_mod.SOFT_PRESETS,
+                "intro_kinds": endings_mod.INTRO_KINDS, "intro": endings_mod.INTRO_PRESETS, "like": endings_mod.LIKE_DEFAULTS,
                 "items": [e.model_dump() for e in endings.all()]}
 
     @router.post("/endings/image")
@@ -321,7 +334,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.post("/endings")
     def save_ending(e: EndingPreset):
-        if e.kind not in endings_mod.KINDS:
+        if e.kind not in endings_mod.KINDS and e.kind not in endings_mod.INTRO_KINDS:
             raise HTTPException(400, "모르는 엔딩 종류예요.")
         return endings.save(e).model_dump()
 
@@ -332,7 +345,7 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
 
     @router.post("/endings/preview")
     def preview_ending(e: EndingPreset):
-        if e.kind not in endings_mod.KINDS:
+        if e.kind not in endings_mod.KINDS and e.kind not in endings_mod.INTRO_KINDS:
             raise HTTPException(400, "모르는 엔딩 종류예요.")
 
         def work():
@@ -351,7 +364,34 @@ def add_routes(router: APIRouter, ws: Workspace, jobs) -> None:
         e = endings.get(b.ending_id)
         if e is None:
             raise HTTPException(404, "엔딩 프리셋을 찾을 수 없어요.")
+        if e.kind in endings_mod.INTRO_KINDS:       # 인트로 모양이면 영상 맨 앞에, 아니면 맨 끝에
+            return apply_intro(ws, b.project, e).model_dump()
         return apply_ending(ws, b.project, e).model_dump()
+
+    # ---- 좋아요 톡톡: 영상 중간에 잠깐 멈추는 화면
+    @router.post("/likepause/preview")
+    def preview_like_pause(spec: LikePause):
+        def work():
+            name = f"likepause_prev_{uuid.uuid4().hex[:8]}.mp4"
+            endings_mod.render(ws.root / "exports" / name, {**spec.model_dump(exclude={"at"}), "kind": endings_mod.LIKE_KIND}, 360, 640)
+            return {"url": f"/api/exports/{name}"}
+
+        return launch(work)
+
+    @router.post("/likepause/apply")
+    def like_pause_apply(b: LikePauseReq):
+        try:
+            out, at = insert_like_pause(ws, b.project, b.at, b.spec.model_dump(exclude={"at"}), snap=b.snap)
+        except RuntimeError as e:
+            raise HTTPException(500, str(e)) from e
+        return {**out.model_dump(), "at": at}
+
+    @router.post("/likepause/remove")
+    def like_pause_remove(b: LikePauseRemoveReq):
+        out = b.project.model_copy(deep=True)
+        if not remove_like_pauses(out, b.clip_id):
+            raise HTTPException(404, "걷어낼 좋아요 정지 화면이 없어요.")
+        return out.model_dump()
 
     def _apply(p: Project, tid: str, w: Workspace = ws, channel: str = "", hook_text: str | None = None) -> Project:
         t = find_template(tid)
