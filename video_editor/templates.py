@@ -13,6 +13,7 @@ import time
 import uuid
 from pathlib import Path
 
+import numpy as np
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ from . import endings as endings_mod
 from .editor import Clip, Project, Track, Workspace, canvas_size, clip_len, project_length
 from .overlays import Overlay
 from .subtitles import SubtitleStyle
+from .thumbnail import grab_frame
 
 TRANSITIONS_OK = ("none", "fade", "dip", "slideleft", "slideright", "wipeleft", "wiperight")
 
@@ -58,6 +60,18 @@ class Anim(BaseModel):
     text_color: str = "#5b3a29"              # 부드러운 엔딩의 글자 색
 
 
+class LikePause(BaseModel):
+    """영상 중간에 잠깐 멈춰 '좋아요'를 톡톡 누르게 하는 화면. 템플릿에 넣으면 영상 길이의 at 비율 지점(말 사이)에 들어가요."""
+    text: str = Field("좋아요 톡톡!", max_length=30)
+    sub: str = Field("마음에 들었다면 눌러 주세요", max_length=30)
+    accent: str = "#f2788a"
+    bg1: str = "#fff6ea"
+    bg2: str = "#fcd9bd"
+    text_color: str = "#5b3a29"
+    duration: float = Field(2.4, ge=1.5, le=5.0)
+    at: float = Field(0.5, ge=0.1, le=0.9)
+
+
 class Template(BaseModel):
     id: str = ""
     name: str = Field(min_length=1, max_length=40)
@@ -74,6 +88,7 @@ class Template(BaseModel):
     outro_transition: str = "fade"
     watermark: Watermark | None = None
     ending: str | None = None                # 엔딩 프리셋 id
+    like_pause: LikePause | None = None      # 영상 중간 '좋아요 톡톡' 정지 화면
     scope: str = ""                          # "space"=이 워크스페이스 전용 (기본), "global"=모든 워크스페이스에 공용
 
 
@@ -213,10 +228,13 @@ def _shift(p: Project, d: float) -> None:
             k.t = round(max(0.0, k.t + d), 4)
 
 
+LIKE_TAG = "likepause"
+
+
 def _strip(p: Project) -> None:
     """이전 템플릿이 넣은 인트로·아웃트로·엔딩과 글자를 걷어냅니다 (인트로를 걷으면 나머지를 앞으로 당김)."""
     intro_len = max([c.start + clip_len(c) for c in p.clips if c.tpl == "intro"] + [0.0])
-    p.clips = [c for c in p.clips if not c.tpl]
+    p.clips = [c for c in p.clips if not c.tpl or c.tpl == LIKE_TAG]      # 좋아요 정지 화면은 따로 넣고 빼요
     p.overlays = [o for o in p.overlays if not o.tpl]
     if intro_len > 0:
         _shift(p, -intro_len)
@@ -255,7 +273,7 @@ def _place(ws: Workspace, p: Project, mid: str, at: float, tag: str, transition:
     return dur
 
 
-def _anim_media(ws: Workspace, params: dict, label: str, W: int, H: int) -> str:
+def _anim_media(ws: Workspace, params: dict, label: str, W: int, H: int, extra: dict | None = None) -> str:
     """애니메이션 카드를 (같은 설정은 한 번만) 만들어 보관함에 숨겨 두고 그 미디어 id를 돌려줍니다."""
     params = dict(params)
     img_path = None
@@ -269,7 +287,7 @@ def _anim_media(ws: Workspace, params: dict, label: str, W: int, H: int) -> str:
     meta_p = ws.meta_path(mid)
     if not meta_p.exists():
         out = ws.root / "media" / f"{mid}.mp4"
-        endings_mod.render(out, {**params, **({"image_path": str(img_path)} if img_path else {})}, W, H)
+        endings_mod.render(out, {**params, **({"image_path": str(img_path)} if img_path else {}), **(extra or {})}, W, H)
         from .editor import probe
         info = probe(out)
         meta_p.write_text(json.dumps({"id": mid, "name": label, "file": out.name, "recorded": False,
@@ -311,6 +329,14 @@ def apply_template(ws: Workspace, p: Project, tpl: Template, endings: Store, can
             out.overlays.append(Overlay(id=_uid(), kind="title", text=hook_text.strip() or HOOK_PLACEHOLDER, start=h.start, end=h.end,
                                         y=h.y, size=h.size, color=h.color, bg_color=h.bg_color, bg_opacity=h.bg_opacity, outline=h.outline))
     W, H = canvas or canvas_size(ws, out)
+    if tpl.like_pause:                      # 템플릿에 정지 화면이 있을 때만 이전 것을 바꿔요 (없으면 직접 넣은 것은 그대로)
+        remove_like_pauses(out)
+    if tpl.like_pause and project_length(out) >= 6.0:
+        lp = tpl.like_pause
+        try:
+            out = insert_like_pause(ws, out, project_length(out) * lp.at, lp.model_dump(exclude={"at"}), canvas=(W, H))[0]
+        except HTTPException:
+            pass          # 멈출 화면을 못 뽑으면(소리뿐인 영상 등) 정지 화면만 건너뛰고 나머지는 입혀요
     if tpl.intro:
         _place_front(ws, out, tpl.intro, tpl.intro_transition)
     elif tpl.intro_card:
@@ -355,6 +381,18 @@ def project_from_media(ws: Workspace, mid: str) -> Project:
     return p
 
 
+def apply_intro(ws: Workspace, p: Project, preset: EndingPreset) -> Project:
+    """인트로만 (다시) 붙입니다. 이전에 붙인 인트로는 걷어내고(나머지를 앞으로 당김) 영상 맨 앞에 새로 붙여요."""
+    out = p.model_copy(deep=True)
+    intro_len = max([c.start + clip_len(c) for c in out.clips if c.tpl == "intro"] + [0.0])
+    out.clips = [c for c in out.clips if c.tpl != "intro"]
+    if intro_len > 0:
+        _shift(out, -intro_len)
+    W, H = canvas_size(ws, out)
+    _place_front(ws, out, _anim_media(ws, preset.model_dump(exclude={"id", "name"}), f"인트로 · {preset.name}", W, H), "none")
+    return out
+
+
 def apply_ending(ws: Workspace, p: Project, preset: EndingPreset) -> Project:
     """엔딩만 (다시) 붙입니다. 이전에 붙인 엔딩은 걷어내고 영상 맨 끝에 새로 붙여요."""
     out = p.model_copy(deep=True)
@@ -362,3 +400,127 @@ def apply_ending(ws: Workspace, p: Project, preset: EndingPreset) -> Project:
     W, H = canvas_size(ws, out)
     _place(ws, out, _ending_media(ws, preset, W, H), project_length(out), "ending")
     return out
+
+
+# ---------------------------------------------------------------- 좋아요 톡톡: 영상 중간 정지 화면
+
+def _shift_from(p: Project, t: float, d: float) -> None:
+    """t 이후에 시작하는 클립·자막·글자·볼륨 점을 d초 옮깁니다. t를 가로지르는 자막·글자는 끝만 d만큼 늘이거나 줄여요."""
+    for c in p.clips:
+        if c.start >= t - 1e-3:
+            c.start = round(max(0.0, c.start + d), 4)
+    for q in p.subtitles:
+        if q.start >= t - 1e-3:
+            q.start, q.end = round(max(0.0, q.start + d), 4), round(max(0.05, q.end + d), 4)
+        elif q.end > t + 1e-3:
+            q.end = round(max(q.start + 0.05, q.end + d), 4)
+    for o in p.overlays:
+        if o.start >= t - 1e-3:
+            o.start = round(max(0.0, o.start + d), 4)
+            if o.end is not None:
+                o.end = round(max(o.start + 0.05, o.end + d), 4)
+        elif o.end is not None and o.end > t + 1e-3:
+            o.end = round(max(o.start + 0.05, o.end + d), 4)
+    for tr in p.tracks:
+        for k in tr.vol_keys:
+            if k.t >= t - 1e-3:
+                k.t = round(max(0.0, k.t + d), 4)
+
+
+def _split_clips_at(p: Project, at: float) -> None:
+    """at 시각에 걸쳐 있는 클립을 앞뒤 둘로 나눕니다 (같이 묶인 영상·소리는 같이, 볼륨 점도 나눠 가져요)."""
+    relink: dict[str, str] = {}
+    add = []
+    for c in p.clips:
+        if c.tpl or not (c.start < at - 1e-3 and c.start + clip_len(c) > at + 1e-3):
+            continue
+        rel = at - c.start                                  # 클립 안에서의 타임라인 초
+        src = c.src_in + rel * c.speed
+        right = c.model_copy(deep=True)
+        right.id, right.start, right.src_in, right.transition = _uid(), at, round(src, 4), "none"
+        if c.link:
+            right.link = relink.setdefault(c.link, _uid())
+        if c.vol_keys:
+            ks = sorted(c.vol_keys, key=lambda k: k.t)
+            v0 = float(np.interp(rel, [k.t for k in ks], [k.v for k in ks]))
+            right.vol_keys = [type(ks[0])(t=0.0, v=v0)] + [type(k)(t=round(k.t - rel, 4), v=k.v) for k in ks if k.t - rel > 1e-3]
+            c.vol_keys = [k for k in ks if k.t <= rel + 1e-3] + [type(ks[0])(t=round(rel, 4), v=v0)]
+        c.src_out = round(src, 4)
+        add.append(right)
+    p.clips.extend(add)
+
+
+def _top_video_clip(p: Project, at: float):
+    vt = {t.id for t in p.tracks if t.kind == "video"}
+    cands = [c for c in p.clips if c.track in vt and not c.disabled and c.layout != "pip" and c.start - 1e-6 <= at < c.start + clip_len(c)]
+    return cands[-1] if cands else None
+
+
+def _snap_out_of_speech(p: Project, at: float) -> float:
+    """정지 위치가 자막(말) 한가운데면 가장 가까운 말 사이로 옮깁니다."""
+    inside = lambda t: any(q.start + 0.05 < t < q.end - 0.05 for q in p.subtitles)
+    if not inside(at):
+        return at
+    cands = [x for q in p.subtitles for x in (q.start, q.end) if not inside(x)]
+    return min(cands, key=lambda x: abs(x - at)) if cands else at
+
+
+def insert_like_pause(ws: Workspace, p: Project, at: float, params: dict | None = None, canvas: tuple[int, int] | None = None,
+                      snap: bool = True) -> tuple[Project, float]:
+    """at초 지점에서 영상을 잠깐 멈추고 '좋아요 톡톡' 화면을 끼웁니다. 그 뒤의 모든 것은 멈춘 길이만큼 뒤로 밀려요.
+    멈춘 화면은 그 순간의 영상 장면이에요. 새로 정해진 위치(자막 틈으로 옮겨졌을 수 있어요)를 함께 돌려줍니다."""
+    prm = {**endings_mod.LIKE_DEFAULTS, **(params or {}), "kind": endings_mod.LIKE_KIND}
+    prm = {k: prm[k] for k in ("kind", "text", "sub", "accent", "bg1", "bg2", "text_color", "duration") if k in prm}
+    out = p.model_copy(deep=True)
+    total = project_length(out)
+    at = max(0.5, min(float(at), total - 0.5))
+    if snap:
+        at = max(0.5, min(_snap_out_of_speech(out, at), total - 0.5))
+    top = _top_video_clip(out, at)
+    if top is not None and top.tpl:
+        raise HTTPException(400, "인트로·아웃트로·엔딩 위에는 넣을 수 없어요. 본 영상 위에서 위치를 잡아 주세요.")
+    W, H = canvas or canvas_size(ws, out)
+    extra, frame_sha = {}, ""
+    if top is not None:
+        m = ws.meta(top.media)
+        if m.get("has_video"):
+            png = ws.root / "exports" / f"_freeze_{uuid.uuid4().hex[:8]}.png"
+            png.parent.mkdir(exist_ok=True)
+            try:
+                grab_frame(ws.media_file(top.media), top.src_in + (at - top.start) * top.speed, png)
+                frame_sha = hashlib.sha1(png.read_bytes()).hexdigest()[:12]
+                extra["frame_path"] = str(png)
+                prm["frame_sha"] = frame_sha          # 같은 장면이면 한 번만 만들어요
+                mid = _anim_media(ws, prm, "좋아요 정지", W, H, extra)
+            except RuntimeError as e:
+                raise HTTPException(500, str(e)) from e
+            finally:
+                png.unlink(missing_ok=True)
+        else:
+            mid = _anim_media(ws, prm, "좋아요 정지", W, H)
+    else:
+        raise HTTPException(400, "그 위치에는 영상이 없어요. 영상이 있는 곳에 재생 위치를 놓아 주세요.")
+    dur = float(ws.meta(mid)["duration"])
+    _split_clips_at(out, at)
+    _shift_from(out, at, dur)
+    _place(ws, out, mid, at, LIKE_TAG)
+    return out, round(at, 3)
+
+
+def remove_like_pauses(p: Project, clip_id: str | None = None) -> bool:
+    """좋아요 정지 화면을 걷어내고 뒤를 당겨 붙입니다 (clip_id를 주면 그 하나만). 지운 게 있으면 True."""
+    target = next((c for c in p.clips if c.id == clip_id), None) if clip_id else None
+    if clip_id and target is None:
+        return False
+    pauses = sorted([c for c in p.clips if c.tpl == LIKE_TAG and (target is None or c.id == target.id or (target.link and c.link == target.link))],
+                    key=lambda c: -c.start)
+    done = False
+    for c in pauses:
+        if c not in p.clips:
+            continue
+        ids = {k.id for k in p.clips if k.id == c.id or (c.link and k.link == c.link)}
+        d = max(clip_len(k) for k in p.clips if k.id in ids)
+        p.clips = [k for k in p.clips if k.id not in ids]
+        _shift_from(p, c.start + d, -d)
+        done = True
+    return done

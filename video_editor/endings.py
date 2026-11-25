@@ -9,6 +9,9 @@ import hashlib
 import json
 import math
 import subprocess
+import tempfile
+import wave
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -29,6 +32,24 @@ SOFT_PRESETS = {
     "soft_hearts": {"text": "고마운 마음 가득 담아", "sub": "다음 이야기에서 만나요", "accent": "#f2788a", "bg1": "#fff1ec", "bg2": "#fbcdc4", "text_color": "#6a3a3a", "duration": 4.0},
     "soft_text": {"text": "따뜻한 하루 보내세요", "sub": "알림 설정하고 다음 사연도 들어요", "accent": "#e8985e", "bg1": "#fdf3e3", "bg2": "#f7dcb8", "text_color": "#5b3a29", "duration": 4.0},
 }
+# 부드러운 인트로: 부드러운 엔딩과 같은 그림체로, 영상 맨 앞에 짧게(2~3초) 들어가요. 엔딩 모양 목록(KINDS)에는 나오지 않아요.
+INTRO_KINDS = {
+    "soft_open_logo": "💛 인트로 · 로고가 살며시 떠오름 (이미지)",
+    "soft_open_card": "💛 인트로 · 둥근 카드로 건네는 인사 (이미지)",
+    "soft_open_hearts": "💛 인트로 · 하트가 피어오르는 인사 (이미지)",
+    "soft_open_text": "💛 인트로 · 글로 건네는 인사 (이미지 작게)",
+}
+INTRO_PRESETS = {
+    "soft_open_logo": {"text": "오늘의 이야기", "sub": "편하게 들어 주세요", "accent": "#f08a5d", "bg1": "#fff6ea", "bg2": "#fcd9bd", "text_color": "#5b3a29", "duration": 2.8},
+    "soft_open_card": {"text": "안녕하세요", "sub": "오늘도 따뜻한 사연이에요", "accent": "#f08a5d", "bg1": "#fff2e2", "bg2": "#f9cfae", "text_color": "#5b3a29", "duration": 2.8},
+    "soft_open_hearts": {"text": "반가워요", "sub": "오늘도 함께해요", "accent": "#f2788a", "bg1": "#fff1ec", "bg2": "#fbcdc4", "text_color": "#6a3a3a", "duration": 2.8},
+    "soft_open_text": {"text": "따뜻한 이야기를 시작해요", "sub": "잠시 귀 기울여 주세요", "accent": "#e8985e", "bg1": "#fdf3e3", "bg2": "#f7dcb8", "text_color": "#5b3a29", "duration": 2.8},
+}
+INTRO_SPEED = 1.4          # 엔딩 연출을 이 배수로 빠르게 돌려 짧은 인트로로 씁니다
+# 영상 중간에 잠깐 멈추고 '좋아요'를 톡톡 누르게 하는 정지 화면 (화면을 톡톡 건드리는 손가락 + 하트 버튼)
+LIKE_KIND = "like_tap"
+LIKE_DEFAULTS = {"text": "좋아요 톡톡!", "sub": "마음에 들었다면 눌러 주세요", "accent": "#f2788a", "bg1": "#fff6ea", "bg2": "#fcd9bd",
+                 "text_color": "#5b3a29", "duration": 2.4}
 KINDS = {
     **SOFT_KINDS,
     "subscribe": "구독 버튼 누르기",
@@ -114,6 +135,13 @@ def frame(p: dict, t: float, W: int, H: int, bg: np.ndarray, rng: np.random.Gene
         return im
     if kind in SOFT_KINDS:
         _soft(im, kind, p, t, W, H)
+        return im
+    if kind in INTRO_KINDS:
+        base = _intro_base(kind)
+        _soft(im, base, {**p, "kind": base, "duration": float(p["duration"]) * INTRO_SPEED}, t * INTRO_SPEED, W, H)
+        return im
+    if kind == LIKE_KIND:
+        _like_tap(im, p, t, W, H)
         return im
     if kind == "subscribe":
         _text_center(d, (cx, cy - u * 0.55), p["text"], u * 0.10, "#ffffff", 3, appear, W)
@@ -425,20 +453,133 @@ def _soft_ctx(p: dict, W: int, H: int) -> dict:
     return ctx
 
 
+# ---------------------------------------------------------------- 좋아요 톡톡 (영상 중간 정지)
+
+def _tap_times(dur: float) -> tuple[float, float]:
+    return dur * 0.36, dur * 0.56
+
+
+def _like_ctx(p: dict, W: int, H: int):
+    """멈춘 화면(frame_path)을 화면 크기에 맞춰 두 벌 준비: 원본, 크림빛을 얹은 것. 화면이 없으면 부드러운 배경."""
+    path = p.get("frame_path")
+    try:
+        if not path:
+            raise OSError
+        im = Image.open(path).convert("RGB")
+        sc = max(W / im.width, H / im.height)      # 꽉 채우고 넘치는 곳은 자름
+        im = im.resize((max(W, round(im.width * sc)), max(H, round(im.height * sc))), Image.LANCZOS)
+        l, t = (im.width - W) // 2, (im.height - H) // 2
+        orig = im.crop((l, t, l + W, t + H))
+    except Exception:
+        orig = Image.fromarray(_soft_bg(W, H, p["bg1"], p["bg2"], "soft_logo"))
+    wash = Image.blend(orig.filter(ImageFilter.GaussianBlur(max(2, W // 160))), Image.new("RGB", (W, H), _rgb(p["bg1"])), 0.5)
+    p["_orig"], p["_wash"] = orig, wash
+    return np.asarray(orig)
+
+
+def _like_audio(p: dict) -> str:
+    """톡 하고 누르는 소리 두 번 (부드러운 '뽕')을 짧은 wav로 만들어 둡니다."""
+    sr, dur = 44100, float(p["duration"])
+    x = np.zeros(int(sr * dur), np.float32)
+    for tt in _tap_times(dur):
+        n = int(sr * 0.16)
+        t = np.arange(n) / sr
+        f = 520 + 380 * np.exp(-t * 28)                       # 위에서 아래로 살짝 떨어지는 높이
+        env = np.minimum(1, t / 0.004) * np.exp(-t * 22)
+        pop = 0.5 * np.sin(2 * np.pi * np.cumsum(f) / sr) * env
+        i = int(tt * sr)
+        x[i:i + n] += pop[: max(0, len(x) - i)][:n].astype(np.float32)
+    f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False); f.close()
+    with wave.open(f.name, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes((np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes())
+    return f.name
+
+
+def _like_tap(im: Image.Image, p: dict, t: float, W: int, H: int) -> None:
+    dur = float(p["duration"])
+    d0 = Image.blend(p["_orig"], p["_wash"], min(_ease_io(t / 0.3), _ease_io((dur - t) / 0.3)))   # 멈춘 화면이 크림빛으로 살짝 물들었다가 돌아와요
+    im.paste(d0)
+    d = ImageDraw.Draw(im, "RGBA")
+    acc, tc = _rgb(p["accent"]), p.get("text_color") or "#5b3a29"
+    u = min(W * 0.95, H * 0.58)
+    cx, cy = W / 2, H * 0.47
+    out = min(1.0, max(0.0, (dur - t) / 0.3))
+    k = _ease_io((t - 0.1) / 0.45) * out
+    cw, ch = u * 0.86, u * 0.78
+    x0, y0 = cx - cw / 2, cy - ch / 2 + (1 - k) * u * 0.05
+    d.rounded_rectangle((x0, y0 + u * 0.02, x0 + cw, y0 + ch + u * 0.02), radius=u * 0.08, fill=(90, 58, 41, int(40 * k)))   # 그림자
+    d.rounded_rectangle((x0, y0, x0 + cw, y0 + ch), radius=u * 0.08, fill=(255, 253, 249, int(240 * k)))
+    t1, t2 = _tap_times(dur)
+    bx, by = cx, y0 + ch * 0.36                                  # 하트 버튼
+    br = u * 0.15
+    def pulse(tt):      # 눌려서 작아졌다(-1)가 살짝 커지며(+) 돌아오는 정도
+        x = t - tt
+        if x < 0 or x > 0.4:
+            return 0.0
+        return -math.sin(math.pi * x / 0.18) if x < 0.18 else 0.35 * math.sin(math.pi * (x - 0.18) / 0.22)
+    sq = 1 + 0.12 * (pulse(t1) + pulse(t2))
+    taps = (t >= t1) + (t >= t2)
+    r = br * sq * (0.85 + 0.15 * k)
+    d.ellipse((bx - r, by - r, bx + r, by + r), fill=(255, 255, 255, int(255 * k)), outline=acc + (int(255 * k),), width=max(3, int(u * 0.008)))
+    hx, hy, hs = bx, by + r * 0.05, r * 0.043
+    if taps == 0:
+        d.polygon(_heart(hx, hy, hs), outline=acc + (int(255 * k),), fill=acc + (int(40 * k),), width=max(2, int(u * 0.006)))
+    else:                                                        # 누를수록 하트가 차올라요
+        d.polygon(_heart(hx, hy, hs), fill=acc + (int((110 if taps == 1 else 255) * k),))
+    for tt in (t1, t2):                                          # 번져 나가는 물결
+        x = (t - tt) / 0.55
+        if 0 <= x <= 1:
+            rr = br * (1.0 + 1.1 * _ease_out(x))
+            d.ellipse((bx - rr, by - rr, bx + rr, by + rr), outline=acc + (int(170 * (1 - x) * out),), width=max(2, int(u * 0.007)))
+    x = (t - t2) / 0.9                                           # 두 번째 톡 뒤에 하트가 사방으로 톡톡 튀어요
+    if 0 <= x <= 1:
+        for i in range(8):
+            a = i / 8 * 2 * math.pi + 0.3
+            dist = br * (1.2 + 1.5 * _ease_out(x))
+            d.polygon(_heart(bx + math.cos(a) * dist, by + math.sin(a) * dist, u * 0.0045 * (1 - 0.4 * x)), fill=acc + (int(230 * (1 - x) * out),))
+    # 화면을 톡톡 건드리는 손끝 (원 + 하얀 테두리). 오른쪽 아래에서 와서 두 번 누르고 사라져요
+    appear = _ease_io((t - 0.15) / 0.3)
+    gone = 1 - _ease_io((t - t2 - 0.35) / 0.3)
+    fa = appear * gone * out
+    if fa > 0.02:
+        mv = _ease_io((t - 0.15) / (t1 - 0.15 - 0.05))
+        fx = bx + u * 0.18 * (1 - mv) + u * 0.012
+        fy = by + u * 0.2 * (1 - mv) + r * 0.25
+        press = 1 - 0.22 * (max(0.0, -pulse(t1)) + max(0.0, -pulse(t2)))
+        fr = u * 0.045 * press
+        d.ellipse((fx - fr * 1.5, fy - fr * 1.5, fx + fr * 1.5, fy + fr * 1.5), fill=(90, 58, 41, int(36 * fa)))
+        d.ellipse((fx - fr, fy - fr, fx + fr, fy + fr), fill=(255, 255, 255, int(200 * fa)), outline=(90, 58, 41, int(120 * fa)), width=max(2, int(u * 0.004)))
+    kt = _ease_io((t - 0.35) / 0.5) * out
+    _stext(d, (cx, y0 + ch * 0.68 + (1 - kt) * u * 0.03), p["text"], u * 0.075, tc, cw / 0.86 * 0.92, kt, False)
+    _stext(d, (cx, y0 + ch * 0.68 + u * 0.1 + (1 - kt) * u * 0.03), p["sub"], u * 0.04, "#" + "%02x%02x%02x" % acc, cw / 0.86 * 0.92, kt * 0.95, False)
+
+
+def _intro_base(kind: str) -> str:
+    return kind.replace("soft_open_", "soft_", 1)
+
+
 def render(path, params: dict, W: int, H: int) -> None:
     p = {**DEFAULTS, **params}
-    if p["kind"] not in KINDS and p["kind"] not in CARD_KINDS:
+    if p["kind"] not in KINDS and p["kind"] not in CARD_KINDS and p["kind"] not in INTRO_KINDS and p["kind"] != LIKE_KIND:
         raise ValueError("모르는 엔딩 종류예요.")
     W, H = W // 2 * 2, H // 2 * 2
     n = int(round(float(p["duration"]) * FPS))
-    if p["kind"] in SOFT_KINDS:
-        bg = _soft_bg(W, H, p["bg1"], p["bg2"], p["kind"])
-        p["_ctx"] = _soft_ctx(p, W, H)
+    audio = None
+    if p["kind"] in SOFT_KINDS or p["kind"] in INTRO_KINDS:
+        base = p["kind"] if p["kind"] in SOFT_KINDS else _intro_base(p["kind"])
+        bg = _soft_bg(W, H, p["bg1"], p["bg2"], base)
+        p["_ctx"] = _soft_ctx({**p, "kind": base}, W, H)
+    elif p["kind"] == LIKE_KIND:
+        bg = _like_ctx(p, W, H)
+        audio = _like_audio(p)
     else:
         bg = _bg(W, H, p["bg1"], p["bg2"])
     rng = np.random.default_rng(1)
-    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)]
+    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-"]
+    if audio:
+        cmd += ["-i", audio, "-c:a", "aac", "-aac_coder", "fast", "-b:a", "128k", "-shortest"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for i in range(n):
@@ -450,6 +591,8 @@ def render(path, params: dict, W: int, H: int) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        if audio:
+            Path(audio).unlink(missing_ok=True)
 
 
 def ending_key(params: dict, W: int, H: int) -> str:
