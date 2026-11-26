@@ -670,6 +670,7 @@ const MIX_IGNORE = ['transition', 'transition_dur', 'tail_hold', 'layout', 'pip_
 // 예전에 저장된 프로젝트나 새로 만든 클립에 빠진 항목을 채웁니다
 function normalize(p) {
   p.subtitles ||= []; p.subtitle_lang ||= ''; p.overlays ||= [];
+  p.subtitle_tracks = (Array.isArray(p.subtitle_tracks) ? p.subtitle_tracks : []).slice(0, 10).map((t) => ({ name: (t && t.name) || '', style: (t && t.style && typeof t.style === 'object') ? t.style : {} }));
   p.markers = (Array.isArray(p.markers) ? p.markers : []).filter((m) => m && Number.isFinite(m.t)).map((m) => ({ id: m.id || uid(), t: m.t, label: m.label || '', color: m.color || '' }));
   for (const q of p.subtitles) { q.words ||= []; q.emotion ||= ''; }
   p.subtitle_style = { ...SUB_DEFAULTS, ...(p.subtitle_style || {}) };
@@ -686,14 +687,14 @@ function defaultProject() {
   return {
     tracks: [newTrack('video', { name: 'V1' }), newTrack('audio', { name: '원본 소리', duck: 0.3 }), voice,
              newTrack('audio', { name: '음악·효과음', duck: 0.5 })],
-    clips: [], subtitles: [], subtitle_style: { ...SUB_DEFAULTS }, subtitle_lang: '', overlays: [],
+    clips: [], subtitles: [], subtitle_style: { ...SUB_DEFAULTS }, subtitle_tracks: [], subtitle_lang: '', overlays: [],
   };
 }
 let project = defaultProject();
 let ui = { zoom: 60, latency: 0, monitor: false, snap: true, armed: null,
   guides: true, rowScale: 1, th: {}, lock: {}, follow: true, magnetic: false, placeMode: 'free', inout: { in: null, out: null }, ws: 'edit', binW: 236, dockW: 300, tlH: 280, binOpen: true, dockOpen: true };
 let media = {};                 // id -> meta (서버 보관함)
-let sel = { clip: null, track: null, cue: null, subs: false, ov: null, multi: new Set() };
+let sel = { clip: null, track: null, cue: null, subs: false, lane: null, ov: null, multi: new Set() };
 try {
   // 이 브라우저에 저장된 것 → (예전에 쓰던 하나뿐인 저장분: '기존 작업'만) → 서버의 프로젝트 파일(timeline.json) 순서
   let raw = null;
@@ -752,7 +753,13 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); } }, true);
 const trackOf = (c) => project.tracks.find((t) => t.id === c.track);
 const clipById = (id) => project.clips.find((c) => c.id === id);
-const subLanes = () => Math.max(1, ...project.subtitles.map((c) => (c.lane || 0) + 1));
+const subLanes = () => Math.min(10, Math.max(1, (project.subtitle_tracks || []).length, ...project.subtitles.map((c) => (c.lane || 0) + 1)));
+// 자막 트랙(줄)별 스타일: 전체 스타일 위에 그 트랙이 따로 정한 항목만 덮어씁니다 (edit() 안에서만 laneOv를 부르세요)
+const laneOv = (l) => { while (project.subtitle_tracks.length <= l) project.subtitle_tracks.push({ name: '', style: {} }); return project.subtitle_tracks[l].style; };
+const laneStyle = (l) => ({ ...project.subtitle_style, ...((project.subtitle_tracks[l] || {}).style || {}) });
+const laneYFixed = (l) => 'y' in ((project.subtitle_tracks[l] || {}).style || {});
+const laneName = (l) => ((project.subtitle_tracks[l] || {}).name || '').trim() || `자막 ${l + 1}`;
+const cueTop = (c, st) => (laneYFixed(c.lane || 0) ? st.y : st.y - (c.lane || 0) * st.size * LANE_STEP);
 const subH = () => subLanes() * SUBH;
 const LANE_STEP = 1.45;   // 자막 트랙 한 칸 = 글자 크기 × 이 값만큼 위로 (내보내기와 같은 값)
 const cueById = (id) => project.subtitles.find((c) => c.id === id);
@@ -956,7 +963,7 @@ const actx = () => (ac ||= new (window.AudioContext || window.webkitAudioContext
 let T = 0, playing = null, recording = null;
 const playhead = () => (playing ? playing.t0 + (actx().currentTime - playing.c0) : T);
 const projectBody = () => ({ tracks: project.tracks, clips: project.clips, subtitles: project.subtitles,
-  subtitle_style: project.subtitle_style, subtitle_lang: project.subtitle_lang, overlays: project.overlays });
+  subtitle_style: project.subtitle_style, subtitle_tracks: project.subtitle_tracks, subtitle_lang: project.subtitle_lang, overlays: project.overlays });
 // 소리 믹스에는 자막·전환·PiP가 영향이 없으니 빼서, 그걸 바꿔도 미리듣기를 다시 만들지 않게 합니다
 const mixBody = () => ({ tracks: project.tracks, clips: project.clips.filter((c) => !c.disabled).map((c) => { const o = { ...c }; for (const k of MIX_IGNORE) delete o[k]; return o; }) });
 const mixes = new Map();
@@ -1184,20 +1191,21 @@ function updateSubs(t, fh) {
   } else if ($('shortSubs').innerHTML) { $('shortSubs').innerHTML = ''; subsKey = ''; }
   const cues = project.subtitles.filter((c) => c.text.trim() && t >= c.start && t < c.end && (!lang || !c.lang || c.lang === lang));
   const flat = (x) => x.replace(/\s+/g, '');
-  const kwords = (c) => (st.karaoke && c.words && c.words.length && flat(c.words.map((w) => w.w).join('')) === flat(c.text) ? c.words : null);
   const kact = (c, w) => { let a = -1; for (let i = 0; i < w.length; i++) if (t - c.start >= w[i].s - 1e-3) a = i; return a; };
-  const key = JSON.stringify([cues.map((c) => { const w = kwords(c); return [c.id, c.text, c.color || '', c.lane || 0, c.id === sel.cue, w ? kact(c, w) : -2]; }), st, fh, SHORT.on]);
+  const sty = (c) => { const l = laneStyle(c.lane || 0); return SHORT.on && SHORT.formats && SHORT.cfg[SHORT.fmt].safe ? safeSubStyle(l, SHORT.formats[SHORT.fmt].safe) : l; };
+  const kwords = (c) => { const q = sty(c); return q.karaoke && c.words && c.words.length && flat(c.words.map((w) => w.w).join('')) === flat(c.text) ? c.words : null; };
+  const key = JSON.stringify([cues.map((c) => { const w = kwords(c); return [c.id, c.text, c.color || '', c.lane || 0, c.id === sel.cue, w ? kact(c, w) : -2, sty(c)]; }), fh, SHORT.on]);
   if (key === subsKey) return;
   subsKey = key; target.innerHTML = '';
-  const px = st.size * fh;
   for (const c of cues) {
+    const st = sty(c), px = st.size * fh;
     const d = document.createElement('div'); d.className = 'cue' + (c.id === sel.cue && !SHORT.on ? ' sel' : ''); d.dataset.cid = c.id; d.textContent = c.text.trim();   // 대문자 변환은 CSS(textTransform)가 합니다
     const kw = kwords(c);
     if (kw) {   // 낱말 강조: 말한 낱말은 강조 색
       const a = kact(c, kw), cjk = c.lang === 'ja' || c.lang === 'zh';
       d.innerHTML = kw.map((w, i) => `<span style="color:${i <= a ? st.hl_color : st.color}">${escapeHtml(w.w)}</span>`).join(cjk ? '' : ' ');
     }
-    Object.assign(d.style, cueLook(st, px), { left: st.x * 100 + '%', top: Math.max(3, (st.y - (c.lane || 0) * st.size * LANE_STEP) * 100) + '%', maxWidth: st.max_width * 100 + '%' });
+    Object.assign(d.style, cueLook(st, px), { left: st.x * 100 + '%', top: Math.max(3, cueTop(c, st) * 100) + '%', maxWidth: st.max_width * 100 + '%' });
     if (c.color && !kw) d.style.color = c.color;   // 이 자막만의 글자색
     target.appendChild(d);
   }
@@ -1357,17 +1365,23 @@ function removeTrack(id) {
   });
 }
 
-// 겹치지 않는 가장 낮은 줄(lane)을 새 자막에 배정해요. 기존 자막은 그대로 둬요.
+// 새로 넣을 자막들이 기존 자막과 시간이 겹치면, 기존 것은 그대로 두고 비어 있는 가장 아래 번호 줄(없으면 새 줄)에 쌓아요
 function assignLanes(cues, existing = project.subtitles) {
   const placed = [...existing];
   for (const c of [...cues].sort((a, b) => a.start - b.start)) {
     let lane = 0;
-    while (lane < 9 && placed.some((q) => (q.lane || 0) === lane && q.start < c.end && c.start < q.end)) lane++;
+    while (lane < 9 && placed.some((q) => (q.lane || 0) === lane && q.start < c.end - 1e-3 && c.start < q.end - 1e-3)) lane++;
     c.lane = lane; placed.push(c);
   }
   return cues;
 }
 // ---- 자막 트랙
+function addSubTrack() {
+  const n = subLanes();
+  if (n >= 10) { status('자막 트랙은 10줄까지 만들 수 있어요.', true); return; }
+  edit(() => { laneOv(n); sel.subs = true; sel.lane = n; sel.cue = null; sel.clip = null; sel.track = null; sel.ov = null; });
+  status(`자막 트랙 ${n + 1}을 만들었어요. 오른쪽 패널에서 이 트랙만의 스타일을 고를 수 있어요.`);
+}
 function addCue(t = playhead(), text = '새 자막', want = null) {
   t = Math.max(0, t);
   // 그 시각이 비어 있는 줄에 넣고, 모든 줄이 겹치면 새 자막 트랙(줄)을 만들어요
@@ -1426,8 +1440,8 @@ async function importSubFile(file) {
     const off = val('srtAt') === 'ph' ? ph : 0, lang = $('srtLang').value.trim().toLowerCase();
     const cues = d.cues.map((c) => ({ id: uid(), start: +(c.start + off).toFixed(3), end: +(c.end + off).toFixed(3), text: c.text, lang, source: 'manual', words: [] }));
     const mode = val('srtMode');
-    if (mode === 'add') assignLanes(cues);
     if (mode === 'lane') { const nl = Math.min(9, Math.max(0, ...project.subtitles.map((q) => (q.lane || 0) + 1))); cues.forEach((c) => (c.lane = nl)); }
+    if (mode === 'add') assignLanes(cues);   // 겹치는 건 새 줄로
     edit(() => { project.subtitles = mode === 'replace' ? cues : [...project.subtitles, ...cues]; sel.cue = null; sel.subs = true; sel.clip = null; sel.track = null; sel.ov = null; });
     dlg.close(); seek(cues[0].start);
     status(`자막 ${cues.length}개를 넣었어요. 글로 편집에서도 이 자막을 대본으로 써요.`);
@@ -1524,14 +1538,24 @@ function renderHeads() {
     el.onclick = () => { sel.track = t.id; sel.clip = null; sel.cue = null; sel.subs = false; sel.ov = null; renderHeads(); renderInspector(); };
     box.appendChild(el);
   }
-  const sh = document.createElement('div');
-  sh.className = 'head subhead' + (sel.subs ? ' sel' : ''); sh.style.top = subTop() + 'px'; sh.style.height = subH() + 'px';
-  sh.innerHTML = `<span class="tn">자막 <small>${project.subtitles.length}개${subLanes() > 1 ? ` · 트랙 ${subLanes()}줄` : ''}</small></span>`;
-  const add = document.createElement('button'); add.innerHTML = ICON('plus'); add.title = '재생 위치에 자막 넣기 (T)';
-  add.onclick = (e) => { e.stopPropagation(); addCue(); };
-  sh.appendChild(add);
-  sh.onclick = () => { sel.subs = true; sel.ov = null; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); };
-  box.appendChild(sh);
+  const nl = subLanes();
+  for (let l = 0; l < nl; l++) {   // 자막 트랙(줄)마다 머리를 따로 둬요: 누르면 그 트랙의 스타일을 고칠 수 있어요
+    const sh = document.createElement('div'), sty = laneStyle(l), own = Object.keys((project.subtitle_tracks[l] || {}).style || {}).length;
+    sh.className = 'head subhead' + (sel.subs && (sel.lane ?? 0) === l ? ' sel' : ''); sh.style.top = (subTop() + l * SUBH) + 'px'; sh.style.height = SUBH + 'px';
+    const n = project.subtitles.filter((c) => (c.lane || 0) === l).length;
+    sh.innerHTML = `<span class="tn"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;background:${sty.color};border:1px solid #fff6"></i>${escapeHtml(laneName(l))} <small>${n}개${own ? ' ●' : ''}</small></span>`;
+    const add = document.createElement('button'); add.innerHTML = ICON('plus'); add.title = `재생 위치에 ${laneName(l)} 자막 넣기${l === 0 ? ' (T)' : ''}`;
+    add.onclick = (e) => { e.stopPropagation(); addCue(playhead(), '새 자막', l); };
+    sh.appendChild(add);
+    if (l === nl - 1 && nl < 10) {
+      const nt = document.createElement('button'); nt.textContent = '＋줄'; nt.title = '새 자막 트랙(줄) 추가';
+      nt.style.cssText = 'font-size:10px;padding:0 4px;margin-left:2px';
+      nt.onclick = (e) => { e.stopPropagation(); addSubTrack(); };
+      sh.appendChild(nt);
+    }
+    sh.onclick = () => { sel.subs = true; sel.lane = l; sel.ov = null; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); };
+    box.appendChild(sh);
+  }
   const oh = document.createElement('div');
   oh.className = 'head subhead ovhead' + (sel.ov ? ' sel' : ''); oh.style.top = ovTop() + 'px'; oh.style.height = ovH() + 'px'; oh.style.setProperty('--tc', '#e11d48');
   oh.innerHTML = `<span class="tn">그래픽 <small>${project.overlays.length}개</small></span>`;
@@ -1844,11 +1868,21 @@ const subPresetCard = (k) => {
   const css = escapeHtml(Object.entries(look).map(([a, v]) => `${a.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase()).replace(/^webkit/, '-webkit')}:${v}`).join(';'));
   return `<button class="spc" data-preset="${k}" title="${k}"><span class="spv"><span style="${css};width:auto;max-width:96%;white-space:nowrap">${st.karaoke ? `<span style="color:${st.hl_color}">자막</span> Abc` : '자막 Abc'}</span></span><small>${k}</small></button>`;
 };
+let styleLane = null, styleLaneFor = null;   // 스타일 패널이 고치는 대상: null = 모든 자막 기본값, 숫자 = 그 자막 트랙만
+const styleTarget = () => (styleLane != null && styleLane < subLanes() ? styleLane : null);
 function subStyleHtml() {
-  const s = project.subtitle_style;
+  const L = styleTarget(), s = L == null ? project.subtitle_style : laneStyle(L);
+  const tk = L == null ? null : (project.subtitle_tracks[L] || { name: '', style: {} });
+  const nOwn = tk ? Object.keys(tk.style).length : 0;
+  const targetUi = `${field('스타일을 적용할 곳', `<select id="sTarget"><option value="">모든 자막 트랙 (기본값)</option>${Array.from({ length: subLanes() }, (_, l) => `<option value="${l}" ${l === L ? 'selected' : ''}>${escapeHtml(laneName(l))}${Object.keys((project.subtitle_tracks[l] || {}).style || {}).length ? ' · 따로 스타일' : ''}</option>`).join('')}</select>`)}
+    ${tk ? `<div class="row" style="margin-bottom:8px"><span class="muted">트랙 이름</span><input type="text" id="sLaneName" style="width:110px" placeholder="자막 ${L + 1}" value="${escapeHtml(tk.name)}">
+      <button id="sLaneReset" ${nOwn ? '' : 'disabled'} title="이 트랙만 바꾼 스타일을 지우고 기본값을 따라가요">기본값 따르기</button>
+      ${L === subLanes() - 1 && L > 0 && !project.subtitles.some((c) => (c.lane || 0) === L) ? '<button id="sLaneDel">트랙 지우기</button>' : ''}</div>
+      <p class="muted" style="margin:0 0 8px">${nOwn ? '이 트랙은 따로 정한 항목만 기본값과 달라요. 바꾸지 않은 항목은 기본값이 바뀌면 같이 바뀌어요.' : '아직 기본값 그대로예요. 아래에서 바꾸면 이 트랙에만 적용돼요.'}</p>` : ''}`;
   const fonts = FONTS.includes(s.font) ? FONTS : [s.font, ...FONTS];
   const col = (id, v) => `<input type="color" id="${id}" value="${v}">`;
-  return `<h2 class="sub">자막 스타일 <span class="muted" style="text-transform:none">(모든 자막)</span></h2>
+  return `<h2 class="sub">자막 스타일 <span class="muted" style="text-transform:none">(${L == null ? '모든 자막 트랙' : escapeHtml(laneName(L))})</span></h2>
+    ${targetUi}
     <div class="spgrid">${Object.keys(SUB_PRESETS).map(subPresetCard).join('')}</div>
     ${field('글꼴', `<select id="sFont">${fonts.map((f) => `<option ${f === s.font ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('')}</select>`)}
     ${field(`크기 <b id="sSizeV">${(s.size * 100).toFixed(1)}%</b>`, `<input type="range" id="sSize" min="0.02" max="0.2" step="0.005" value="${s.size}">`)}
@@ -1864,17 +1898,17 @@ function subStyleHtml() {
     ${field(`네온 빛 <b id="sGlV">${s.glow ? pct(s.glow) : '없음'}</b>`, `<input type="range" id="sGl" min="0" max="1" step="0.05" value="${s.glow}">`)}
     ${field(`글자 간격 <b id="sSpV">${pct(s.spacing)}</b>`, `<input type="range" id="sSp" min="0" max="0.15" step="0.005" value="${s.spacing}">`)}
     ${s.bg_opacity ? field(`상자 여백 <b id="sPadV">${pct(s.box_pad)}</b>`, `<input type="range" id="sPad" min="0" max="0.8" step="0.05" value="${s.box_pad}">`) : ''}
-    <div class="field"><span>세로 위치</span><div class="row"><button data-y="0.12">위</button><button data-y="0.5">가운데</button><button data-y="0.85">아래</button></div></div>
+    <div class="field"><span>세로 위치</span><div class="row"><button data-y="0.12">위</button><button data-y="0.5">가운데</button><button data-y="0.85">아래</button>${L != null && laneYFixed(L) ? '<button id="sYAuto" title="위치를 따로 정하지 않고 기본 위치 위로 쌓아요">자동 쌓기</button>' : ''}</div></div>
     ${field('', `<input type="range" id="sY" min="0.05" max="0.95" step="0.005" value="${s.y}">`)}
-    <p class="muted">글자 크기는 화면 높이 기준이라 세로 영상에도 같은 비율로 입혀져요. 쇼츠·릴스 안전 영역 안내는 나중에 추가해요.</p>`;
+    <p class="muted">글자 크기는 화면 높이 기준이라 세로 영상에도 같은 비율로 입혀져요. ${L == null ? '' : '세로 위치를 따로 정하지 않으면 기본 위치에서 트랙 번호만큼 위로 쌓여요.'}</p>`;
 }
 function bindSubStyle() {
-  const s = project.subtitle_style;
+  const L = styleTarget(), W = () => (L == null ? project.subtitle_style : laneOv(L));   // 쓰기 대상 (트랙이면 그 트랙이 따로 정한 항목들)
   const bind = (id, key, kind, lbl) => {
     const el = $(id); if (!el) return;
-    if (kind === 'check') { el.onchange = (e) => edit(() => (s[key] = e.target.checked)); return; }
-    if (kind === 'select') { el.onchange = (e) => edit(() => (s[key] = e.target.value)); return; }
-    el.oninput = (e) => { begin(); s[key] = kind === 'color' ? e.target.value : +e.target.value; if (lbl) $(lbl[0]).textContent = lbl[1](s[key]); };
+    if (kind === 'check') { el.onchange = (e) => edit(() => (W()[key] = e.target.checked)); return; }
+    if (kind === 'select') { el.onchange = (e) => edit(() => (W()[key] = e.target.value)); return; }
+    el.oninput = (e) => { begin(); const v = kind === 'color' ? e.target.value : +e.target.value; W()[key] = v; if (lbl) $(lbl[0]).textContent = lbl[1](v); };
     el.onchange = () => commit();
   };
   bind('sFont', 'font', 'select'); bind('sBold', 'bold', 'check'); bind('sItal', 'italic', 'check'); bind('sUp', 'upper', 'check');
@@ -1884,10 +1918,21 @@ function bindSubStyle() {
   bind('sColor', 'color', 'color'); bind('sOutC', 'outline_color', 'color'); bind('sBgC', 'bg_color', 'color');
   bind('sOut', 'outline', 'range', ['sOutV', pct]); bind('sBg', 'bg_opacity', 'range', ['sBgV', (v) => (v ? pct(v) : '없음')]);
   bind('sY', 'y', 'range');
-  document.querySelectorAll('[data-preset]').forEach((b) => (b.onclick = () => edit(() => Object.assign(s, SUB_RESET, SUB_PRESETS[b.dataset.preset]))));
-  document.querySelectorAll('[data-y]').forEach((b) => (b.onclick = () => edit(() => (s.y = +b.dataset.y))));
+  document.querySelectorAll('[data-preset]').forEach((b) => (b.onclick = () => edit(() => {
+    const pr = { ...SUB_RESET, ...SUB_PRESETS[b.dataset.preset] };
+    if (L != null) { delete pr.x; delete pr.y; }   // 트랙 스타일은 위치를 건드리지 않고 모양만 바꿔요
+    Object.assign(W(), pr);
+  })));
+  document.querySelectorAll('[data-y]').forEach((b) => (b.onclick = () => edit(() => (W().y = +b.dataset.y))));
+  const pick = $('sTarget'); if (pick) pick.onchange = (e) => { styleLane = e.target.value === '' ? null : +e.target.value; renderInspector(); };
+  const nm = $('sLaneName'); if (nm) nm.onchange = (e) => edit(() => { laneOv(L); project.subtitle_tracks[L].name = e.target.value.trim().slice(0, 20); });
+  const rs = $('sLaneReset'); if (rs) rs.onclick = () => edit(() => { project.subtitle_tracks[L].style = {}; });
+  const au = $('sYAuto'); if (au) au.onclick = () => edit(() => { delete project.subtitle_tracks[L].style.y; });
+  const dl = $('sLaneDel'); if (dl) dl.onclick = () => edit(() => { project.subtitle_tracks.length = Math.min(project.subtitle_tracks.length, L); styleLane = null; sel.lane = null; });
 }
 function renderSubInspector(box, cue, result, note = '') {
+  const lk = cue ? 'c' + cue.id : 'l' + (sel.lane ?? 'x');   // 고르는 대상이 바뀌면 스타일 패널도 그 자막의 트랙으로 맞춰요
+  if (lk !== styleLaneFor) { styleLaneFor = lk; styleLane = cue ? (cue.lane || 0) : (sel.lane ?? null); }
   const cues = [...project.subtitles].sort((a, b) => a.start - b.start);
   box.innerHTML = `${note}<h2>자막</h2>
     ${cue ? `${field('내용', `<textarea id="cText" rows="3" placeholder="자막 내용 (줄바꿈 가능)">${escapeHtml(cue.text)}</textarea>`)}
@@ -2157,6 +2202,7 @@ function draw() {
     const x = q.start * s, w = Math.max(3, (q.end - q.start) * s), y = sr.y + (q.lane || 0) * SUBH + 4, h = SUBH - 9;
     g.fillStyle = col('--subclip') + 'cc'; roundRect(g, x, y, w, h, 4); g.fill();
     g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+    g.fillStyle = laneStyle(q.lane || 0).color; g.fillRect(x, y, 3, h);   // 이 트랙의 글자색 띠
     g.fillStyle = '#fff'; g.font = '11px sans-serif'; g.fillText(q.text.replace(/\n/g, ' ') || '(빈 자막)', x + 5, y + 16);
     g.restore();
     if (q.id === sel.cue) { g.strokeStyle = col('--sel'); g.lineWidth = 2; roundRect(g, x + 1, y + 1, w - 2, h - 2, 4); g.stroke(); g.lineWidth = 1; }
@@ -2297,7 +2343,7 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     const q = cueHit(x, y);
     sel.clip = null; sel.track = null;
-    if (!q) { sel.cue = null; sel.subs = true; sel.ov = null; seek(x / pps()); drag = { mode: 'scrub' }; renderHeads(); renderInspector(); return; }
+    if (!q) { sel.cue = null; sel.subs = true; sel.lane = laneAt(y); sel.ov = null; seek(x / pps()); drag = { mode: 'scrub' }; renderHeads(); renderInspector(); return; }
     sel.cue = q.q.id; sel.subs = false; sel.ov = null;
     const t0 = playhead(); if (!playing && !(t0 >= q.q.start && t0 < q.q.end)) seek(q.q.start);
     begin(); drag = { mode: q.mode, cue: q.q, x0: x, orig: { ...q.q }, moved: false };
@@ -2656,8 +2702,9 @@ function cueItems(q, tc) {
     { label: 'SRT 파일로 내보내기', fn: exportSrt },
   ];
 }
-const subRowItems = (tc) => [
-  { label: '여기에 자막 넣기', hint: 'T', fn: () => addCue(tc) },
+const subRowItems = (tc, lane = null) => [
+  { label: '여기에 자막 넣기', hint: 'T', fn: () => addCue(tc, '새 자막', lane) },
+  { label: '자막 트랙 추가', disabled: subLanes() >= 10, fn: addSubTrack },
   { label: '여기로 재생 위치 이동', fn: () => seek(tc) },
   { sep: true },
   { label: '자막 파일 불러오기 (SRT·VTT·ASS)', fn: pickSubFile },
@@ -2671,7 +2718,7 @@ canvas.addEventListener('contextmenu', (e) => {
     selectOv(h.o); return popup(e, ovItems(h.o, tc));
   }
   if (inSubRow(y)) {
-    const q = cueHit(x, y); if (!q) { sel.subs = true; sel.ov = null; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); return popup(e, subRowItems(tc)); }
+    const q = cueHit(x, y); if (!q) { sel.subs = true; sel.lane = laneAt(y); sel.ov = null; sel.cue = null; sel.clip = null; sel.track = null; renderHeads(); renderInspector(); return popup(e, subRowItems(tc, laneAt(y))); }
     selectCue(q.q); return popup(e, cueItems(q.q, tc));
   }
   const h = hit(x, y);
@@ -3159,11 +3206,12 @@ async function aiSubs(say) {
     cues.push({ id: uid(), start: t0, end: mediaToTl(c, e0), text: q.text, lang: res.lang, source: 'ai', words, emotion: '' });
   }
   if (!cues.length) return '말소리를 찾지 못했어요.';
+  const nl = () => Math.max(0, ...cues.map((q) => q.lane || 0));
   edit(() => {
-    assignLanes(cues);
+    assignLanes(cues);   // 기존 자막은 지우지 않고, 겹치면 새 자막 줄에 쌓아요
     project.subtitles.push(...cues);
   });
-  return `✅ 자막 ${cues.length}개를 만들었어요 (${AI_LANGS[res.lang] || res.lang}). 자막 트랙에서 고칠 수 있어요.`;
+  return `✅ 자막 ${cues.length}개를 만들었어요 (${AI_LANGS[res.lang] || res.lang}).${nl() > 0 ? ' 기존 자막과 겹쳐서 새 자막 줄에 쌓았어요.' : ''} 자막 트랙에서 고칠 수 있어요.`;
 }
 
 // ---- 2. 무음·군말 자르기
