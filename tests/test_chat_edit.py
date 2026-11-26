@@ -103,15 +103,6 @@ def test_cut_everything_is_refused_and_short_passthrough():
     assert ops[0]["end"] == 20 and chat_edit.apply_ops(proj(), ops).short == {"start": 4.0, "end": 20.0, "format": "shorts"}
 
 
-def test_add_cue_overlapping_goes_to_new_lane():
-    p = chat_edit.apply_ops(proj(), [{"op": "add_cue", "start": 1.0, "end": 3.0, "text": "겹침"},
-                                     {"op": "add_cue", "start": 2.0, "end": 3.5, "text": "또 겹침"},
-                                     {"op": "add_cue", "start": 15.0, "end": 16.0, "text": "안 겹침"}]).project
-    lanes = {c.text: c.lane for c in p.subtitles}
-    assert lanes["겹침"] == 1 and lanes["또 겹침"] == 2 and lanes["안 겹침"] == 0
-    assert all(c.lane == 0 for c in p.subtitles if c.id in ("s1", "s2", "s3"))
-
-
 def test_plan_edit_runs_headless_cli_with_project_context(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak-0000")
     monkeypatch.setattr(claude_copy, "cli_path", lambda: "/usr/bin/claude")
@@ -210,3 +201,29 @@ def test_cue_color_reaches_ass_and_shorts_shift():
     assert "\\c&H00FFFF&" not in to_ass(cues, SubtitleStyle(karaoke=True), 1080, 1920)
     bad = Cue(id="c", start=0, end=1, text="x", color="red")
     assert "\\c&H" not in to_ass([bad], SubtitleStyle(), 1080, 1920)
+
+
+def test_add_cue_overlapping_goes_to_new_lane_and_keeps_existing():
+    p0 = proj()
+    n = len(p0.subtitles)
+    first = p0.subtitles[0]
+    ops = [{"op": "add_cue", "start": first.start + 0.1, "end": first.end + 0.5, "text": "겹침"},
+           {"op": "add_cue", "start": first.start + 0.2, "end": first.end + 0.3, "text": "또 겹침"},
+           {"op": "add_cue", "start": 500.0, "end": 501.0, "text": "안 겹침"}]
+    p = chat_edit.apply_ops(p0, ops).project
+    assert len(p.subtitles) == n + 3
+    new = {c.text: c.lane for c in p.subtitles if c.text in ("겹침", "또 겹침", "안 겹침")}
+    assert new["겹침"] > first.lane and new["또 겹침"] > new["겹침"] and new["안 겹침"] == 0
+
+
+def test_ass_per_track_style_and_stack():
+    from video_editor.subtitles import Cue, SubTrack, SubtitleStyle, to_ass
+    cues = [Cue(id="a", start=0, end=2, text="기본", lane=0), Cue(id="b", start=0, end=2, text="둘째", lane=1),
+            Cue(id="c", start=0, end=2, text="셋째", lane=2)]
+    tracks = [SubTrack(), SubTrack(name="강조", style={"color": "#ff0000", "size": 0.1, "y": 0.2, "bogus": 1}), SubTrack(style={"size": 99})]
+    ass = to_ass(cues, SubtitleStyle(), 1000, 1000, tracks=tracks)
+    assert "Style: Text," in ass and "Style: Text1," in ass and "Style: Text2," in ass
+    assert ",Text1,,0,0,0,,{\\an5\\pos(500,200)" in ass          # y를 따로 정한 트랙은 그 자리 그대로
+    assert ",Text2,,0,0,0,,{\\an5\\pos(500,676)" in ass          # 잘못된 값(size 99)은 무시하고 기본값 + 쌓임 (0.85-2*0.06*1.45)
+    assert "&H000000FF" in ass.split("Style: Text1,")[1].split("\n")[0]   # 1번 트랙 글자색 빨강
+    assert to_ass(cues, SubtitleStyle(), 1000, 1000).count("Style: Text") == 3   # 트랙 설정이 없으면 모두 기본 스타일

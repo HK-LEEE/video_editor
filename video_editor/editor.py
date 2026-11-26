@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from . import ai_voice, characters, overlays as ovl_mod, shorts, workspaces
 from .overlays import Overlay
-from .subtitles import Cue, SubtitleStyle, active_cues, to_ass, to_srt
+from .subtitles import Cue, SubTrack, SubtitleStyle, active_cues, to_ass, to_srt
 from .engine import SAMPLE_RATE as SR, VoiceSettings, load_audio, peak_limit, process, save_wav
 from .presets import load_presets
 
@@ -407,6 +407,7 @@ class Project(BaseModel):
     clips: list[Clip]
     subtitles: list[Cue] = []
     subtitle_style: SubtitleStyle = SubtitleStyle()
+    subtitle_tracks: list[SubTrack] = []   # 자막 트랙(줄)별 이름·스타일 (lane 번호 = 순서). 없으면 전체 스타일을 따름
     subtitle_lang: str = ""     # 비우면 모든 자막, 지정하면 그 언어(와 언어 없음) 자막만 입힘
     overlays: list[Overlay] = []   # 화면 위 글자 (훅 제목·워터마크·자유 글자)
 
@@ -546,7 +547,7 @@ VIDEO_ONLY_CLIP_FIELDS = {"tpl", "transition", "transition_dur", "tail_hold", "l
 
 def project_key(p: Project, ws: Workspace | None = None) -> str:
     """소리 믹스의 캐시 키. 소리에 영향 없는 자막·전환·PiP 설정은 빼서, 그걸 바꿔도 믹스를 다시 만들지 않습니다."""
-    raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_lang": True, "overlays": True,
+    raw = p.model_dump_json(exclude={"subtitles": True, "subtitle_style": True, "subtitle_tracks": True, "subtitle_lang": True, "overlays": True,
                                      "clips": {"__all__": VIDEO_ONLY_CLIP_FIELDS}})
     if ws is not None:  # AI 변환이 끝나거나 캐릭터를 고치면 같은 프로젝트라도 소리가 달라집니다
         for c in p.clips:
@@ -755,16 +756,18 @@ def export_video(ws: Workspace, p: Project, short: shorts.ShortSpec | None = Non
     exports = ws.root / "exports"
     ass_name = ov_name = None
     sub_cues, sub_style, sub_w, sub_h, out_len = p.subtitles, p.subtitle_style, W, H, length
+    sub_adjust = None
     if short:
         graph += ";" + shorts.video_filter(W, H, short, t0, t1)
         out_label, out_len = "vshort", t1 - t0
         sub_cues = shorts.shift_cues(p.subtitles, t0, t1)
         sub_w, sub_h = shorts.OUT_W, shorts.OUT_H
         if short.safe_subs:
-            sub_style = shorts.safe_style(sub_style, short.format)
+            sub_adjust = lambda st: shorts.safe_style(st, short.format)
+            sub_style = sub_adjust(sub_style)
     if active_cues(sub_cues, p.subtitle_lang, out_len):
         ass_name = f"subs_{uid8}.ass"
-        (exports / ass_name).write_text(to_ass(sub_cues, sub_style, sub_w, sub_h, p.subtitle_lang, out_len), encoding="utf-8")
+        (exports / ass_name).write_text(to_ass(sub_cues, sub_style, sub_w, sub_h, p.subtitle_lang, out_len, p.subtitle_tracks, sub_adjust), encoding="utf-8")
         graph += f";[{out_label}]ass=filename={ass_name}[vout]"   # ffmpeg를 exports 폴더에서 돌려서 경로 이스케이프가 필요 없습니다
         out_label = "vout"
     ov_ass = ovl_mod.to_ass(p.overlays, sub_w, sub_h, t1 if short else length, t0,

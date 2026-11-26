@@ -61,6 +61,24 @@ class SubtitleStyle(BaseModel):
     glow: float = Field(0.0, ge=0.0, le=1.0)        # 외곽선 색으로 번지는 빛 (네온)
 
 
+class SubTrack(BaseModel):
+    """자막 트랙(줄) 하나. lane 번호 = 목록 순서. style에는 전체 자막 스타일과 다른 항목만 적습니다 (비어 있으면 전체 스타일을 따름)."""
+    name: str = ""
+    style: dict = {}
+
+
+def lane_style(base: SubtitleStyle, tracks: list[SubTrack] | None, lane: int) -> tuple[SubtitleStyle, bool]:
+    """lane 번호의 자막 스타일과 '세로 위치를 이 트랙이 따로 정했는지'. 알 수 없는 항목·잘못된 값은 무시하고 전체 스타일을 씁니다."""
+    ov = tracks[lane].style if tracks and 0 <= lane < len(tracks) else {}
+    ov = {k: v for k, v in (ov or {}).items() if k in SubtitleStyle.model_fields}
+    if not ov:
+        return base, False
+    try:
+        return SubtitleStyle.model_validate({**base.model_dump(), **ov}), "y" in ov
+    except Exception:
+        return base, False
+
+
 def _color(v: str, default: str) -> str:
     return v if HEX.match(v or "") else default
 
@@ -132,9 +150,8 @@ def karaoke_text(c: Cue, words: list[CueWord], cjk: bool, upper: bool = False) -
     return "".join(out)
 
 
-def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang: str = "",
-           length: float | None = None) -> str:
-    """화면 크기(width×height)에 맞춘 ASS 자막. 배경 상자가 있으면 글자 아래에 상자를 한 겹 더 깝니다."""
+def _lane_ass(name: str, style: SubtitleStyle, width: int, height: int):
+    """한 트랙의 ASS 스타일 줄들과 글자 위치 계산에 쓰는 값."""
     px = max(8.0, style.size * height)              # 미리보기(CSS)의 글자 크기와 같은 기준
     size = round(px * ASS_SIZE_FACTOR)
     outline = round(style.outline * px, 1)
@@ -148,39 +165,56 @@ def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang:
     color = _color(style.color, "#ffffff")
     oc = _color(style.outline_color, "#000000")
     bg = _color(style.bg_color, "#000000")
-    fmt = ("Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,"
-           "StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding")
 
-    def row(name, primary, outl, back, border, ol, secondary="&H000000FF", sh=0.0):
-        return (f"Style: {name},{font},{size},{primary},{secondary},{outl},{back},{bold},{italic},0,0,100,100,{spacing},0,"
+    def row(n, primary, outl, back, border, ol, secondary="&H000000FF", sh=0.0):
+        return (f"Style: {n},{font},{size},{primary},{secondary},{outl},{back},{bold},{italic},0,0,100,100,{spacing},0,"
                 f"{border},{ol},{sh},5,{margin_h},{margin_h},0,1")
 
     kara = style.karaoke
     hl = _color(style.hl_color, "#ffd400")
-    lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}",
-             "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
-             "[V4+ Styles]", f"Format: {fmt}",
-             # 카라오케: SecondaryColour = 아직 안 말한 낱말, PrimaryColour = 말한 낱말
-             row("Text", _ass_rgb(hl if kara else color), _ass_rgb(oc), "&H80000000" if shadow else "&H00000000", 1, outline,
-                 _ass_rgb(color) if kara else "&H000000FF", shadow)]
+    # 카라오케: SecondaryColour = 아직 안 말한 낱말, PrimaryColour = 말한 낱말
+    rows = [row(f"Text{name}", _ass_rgb(hl if kara else color), _ass_rgb(oc), "&H80000000" if shadow else "&H00000000", 1, outline,
+                _ass_rgb(color) if kara else "&H000000FF", shadow)]
     if style.bg_opacity > 0:
         # BorderStyle 3: 글자 뒤에 OutlineColour 색 상자. 글자 자체는 투명하게 해서 상자만 보이게 합니다.
-        lines.append(row("Box", "&HFF000000", _ass_rgb(bg, style.bg_opacity), "&H00000000", 3, box_pad))
-    lines += ["", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"]
+        rows.append(row(f"Box{name}", "&HFF000000", _ass_rgb(bg, style.bg_opacity), "&H00000000", 3, box_pad))
     glow = f"\\blur{round(style.glow * px * 0.2, 1)}" if style.glow > 0 else ""
-    def at(c: Cue) -> tuple[str, str]:
-        y = max(0.03, style.y - c.lane * style.size * LANE_STEP)     # 겹치는 자막은 트랙 번호만큼 위로 쌓습니다
-        base = f"\\an5\\pos({round(style.x * width)},{round(y * height)})"
-        return f"{{{base}{glow}}}", f"{{{base}}}"
-    for c in active_cues(cues, lang, length):
+    return rows, glow
+
+
+def to_ass(cues: list[Cue], style: SubtitleStyle, width: int, height: int, lang: str = "",
+           length: float | None = None, tracks: list[SubTrack] | None = None, adjust=None) -> str:
+    """화면 크기(width×height)에 맞춘 ASS 자막. 배경 상자가 있으면 글자 아래에 상자를 한 겹 더 깝니다.
+    tracks: 트랙(줄)별로 다른 스타일. adjust: 트랙마다 최종 스타일을 한 번 더 고치는 함수 (쇼츠 안전 영역 등)."""
+    shown = active_cues(cues, lang, length)
+    per = {}   # lane → (스타일, y를 따로 정했나, ASS 스타일 줄들, glow)
+    for lane in sorted({c.lane for c in shown} or {0}):
+        st, yfix = lane_style(style, tracks, lane)
+        if adjust:
+            st = adjust(st)
+        rows, glow = _lane_ass(str(lane) if lane else "", st, width, height)
+        per[lane] = (st, yfix, rows, glow)
+    fmt = ("Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,"
+           "StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding")
+    lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}",
+             "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
+             "[V4+ Styles]", f"Format: {fmt}"]
+    for _st, _yf, rows, _g in per.values():
+        lines += rows
+    lines += ["", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"]
+    for c in shown:
+        st, yfix, _rows, glow = per[c.lane]
         end = c.end if length is None else min(c.end, length)
-        pos, box_pos = at(c)
-        shown = c.text.upper() if style.upper else c.text
-        own = f"{{\\c{_ass_bgr(c.color)}}}" if HEX.match(c.color or "") and not style.karaoke else ""   # 이 자막만의 글자색
-        text = pos + own + _ass_text(shown)
-        words = karaoke_words(c) if kara else None
-        top = pos + karaoke_text(c, words, c.lang in ("ja", "zh"), style.upper) if words else text
-        if style.bg_opacity > 0:
-            lines.append(f"Dialogue: 0,{ass_time(c.start)},{ass_time(end)},Box,,0,0,0,,{box_pos}{_ass_text(shown)}")
-        lines.append(f"Dialogue: 1,{ass_time(c.start)},{ass_time(end)},Text,,0,0,0,,{top}")
+        # 겹치는 자막은 트랙 번호만큼 위로 쌓습니다 (그 트랙이 세로 위치를 따로 정했으면 그 자리 그대로)
+        y = max(0.03, st.y if yfix else st.y - c.lane * st.size * LANE_STEP)
+        base = f"\\an5\\pos({round(st.x * width)},{round(y * height)})"
+        pos, box_pos = f"{{{base}{glow}}}", f"{{{base}}}"
+        text_s = c.text.upper() if st.upper else c.text
+        own = f"{{\\c{_ass_bgr(c.color)}}}" if HEX.match(c.color or "") and not st.karaoke else ""   # 이 자막만의 글자색
+        text = pos + own + _ass_text(text_s)
+        words = karaoke_words(c) if st.karaoke else None
+        top = pos + karaoke_text(c, words, c.lang in ("ja", "zh"), st.upper) if words else text
+        if st.bg_opacity > 0:
+            lines.append(f"Dialogue: 0,{ass_time(c.start)},{ass_time(end)},Box{c.lane or ''},,0,0,0,,{box_pos}{_ass_text(text_s)}")
+        lines.append(f"Dialogue: 1,{ass_time(c.start)},{ass_time(end)},Text{c.lane or ''},,0,0,0,,{top}")
     return "\n".join(lines) + "\n"
